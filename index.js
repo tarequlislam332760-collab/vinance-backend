@@ -15,7 +15,7 @@ const app = express();
 // --- Middleware & CORS Configuration ---
 app.use(express.json());
 
-// ✅ CORS ফিক্স করা হয়েছে (সব জায়গা থেকে এক্সেস পাবে)
+// ✅ CORS কনফিগারেশন (সব জায়গা থেকে এক্সেস নিশ্চিত করা হয়েছে)
 app.use(cors({
   origin: "*", 
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -57,7 +57,7 @@ app.post('/api/register', async (req, res) => {
     }
 
     let user = await User.findOne({ email });
-    if (user) return res.status(400).json({ message: "এই ইমেইল দিয়ে আগেই অ্যাকাউন্ট খোলা হয়েছে" });
+    if (user) return res.status(400).json({ message: "এই ইমেইল দিয়ে আগেই অ্যাকাউন্ট খোলা হয়েছে" });
 
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
@@ -72,7 +72,7 @@ app.post('/api/register', async (req, res) => {
 
     await user.save();
     console.log("✅ User Registered:", email);
-    res.status(201).json({ message: "Registration Successful" }); // status 201 adds safety
+    res.status(201).json({ message: "Registration Successful" });
   } catch (err) {
     console.error("❌ Register Error:", err);
     res.status(500).json({ message: "Registration Failed", error: err.message });
