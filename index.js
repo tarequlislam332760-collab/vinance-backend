@@ -14,7 +14,7 @@ const app = express();
 // --- Middleware & CORS Fix ---
 app.use(express.json());
 app.use(cors({
-  origin: true, // সব অরিজিন এলাউ করা হয়েছে ভেরসেলের জন্য
+  origin: true, 
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true
@@ -41,7 +41,37 @@ const adminOnly = async (req, res, next) => {
 // --- Routes ---
 app.get("/", (req, res) => res.send("🚀 Vinance Backend is Live!"));
 
-// Login Route
+// ✅ ১. Register Route (এটি আগে ছিল না, তাই ফেইল করছিল)
+app.post('/api/register', async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+
+    // ইমেইল চেক
+    let user = await User.findOne({ email });
+    if (user) return res.status(400).json({ message: "এই ইমেইল দিয়ে আগেই অ্যাকাউন্ট খোলা হয়েছে" });
+
+    // পাসওয়ার্ড হ্যাশ করা (নিরাপত্তার জন্য)
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    // নতুন ইউজার ডাটাবেজে সেভ (আপনার মডেল অনুযায়ী)
+    user = new User({
+      name,
+      email,
+      password: hashedPassword,
+      balance: 5000, // আপনি শুরুতে ৫০০০ বোনাস দিতে চেয়েছিলেন
+      role: 'user',
+      status: 'active'
+    });
+
+    await user.save();
+    res.status(201).json({ message: "Registration Successful", success: true });
+  } catch (err) {
+    res.status(500).json({ message: "Database Error: " + err.message });
+  }
+});
+
+// ✅ ২. Login Route (আপনার দেওয়া কোড)
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
