@@ -6,6 +6,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
 // Models & Middleware
+// নিশ্চিত করুন আপনার server/models ফোল্ডারে User.js এবং server/middleware এ auth.js আছে
 const User = require('./models/User'); 
 const auth = require('./middleware/auth'); 
 
@@ -15,12 +16,16 @@ const app = express();
 // --- Middleware & CORS Configuration ---
 app.use(express.json());
 
-// ✅ CORS কনফিগারেশন (সব জায়গা থেকে এক্সেস নিশ্চিত করা হয়েছে)
+// ✅ প্রোডাকশন লেভেল CORS কনফিগারেশন
 app.use(cors({
-  origin: "*", 
+  origin: true, // এটি অটোমেটিক রিকোয়েস্টের অরিজিনকে এলাউ করবে
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true
 }));
+
+// OPTIONS রিকোয়েস্ট হ্যান্ডেল করা (CORS এর জন্য জরুরি)
+app.options("*", cors());
 
 // --- Database Connection ---
 mongoose.connect(process.env.MONGO_URI)
@@ -48,7 +53,6 @@ app.get("/", (req, res) => {
 
 // --- Auth Routes ---
 app.post('/api/register', async (req, res) => {
-  console.log("📝 Registration Attempt:", req.body);
   try {
     const { name, email, password } = req.body;
 
@@ -66,15 +70,13 @@ app.post('/api/register', async (req, res) => {
       name,
       email,
       password: hashedPassword,
-      balance: 10000, 
+      balance: 0, // ডিফল্ট ব্যালেন্স ০ রাখা নিরাপদ
       role: 'user'
     });
 
     await user.save();
-    console.log("✅ User Registered:", email);
     res.status(201).json({ message: "Registration Successful" });
   } catch (err) {
-    console.error("❌ Register Error:", err);
     res.status(500).json({ message: "Registration Failed", error: err.message });
   }
 });
@@ -88,7 +90,7 @@ app.post('/api/login', async (req, res) => {
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) return res.status(400).json({ message: "ইমেইল বা পাসওয়ার্ড ভুল" });
 
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '24h' });
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' }); // মেয়াদ ৭ দিন দেওয়া ভালো
     
     res.json({ 
       token, 
@@ -108,7 +110,7 @@ app.post('/api/login', async (req, res) => {
 // --- Admin Panel API ---
 app.get('/api/admin/users', auth, adminOnly, async (req, res) => {
   try {
-    const users = await User.find().select('-password');
+    const users = await User.find().select('-password').sort({ createdAt: -1 });
     res.json(users);
   } catch (err) {
     res.status(500).json({ message: "Error fetching users" });
@@ -124,8 +126,8 @@ app.get('/api/admin/stats', auth, adminOnly, async (req, res) => {
     res.json({
       users: userCount,
       deposit: totalBalance, 
-      withdraw: totalBalance * 0.2, 
-      profit: totalBalance * 0.1 
+      withdraw: totalBalance * 0.1, // এটি আপনার লজিক অনুযায়ী পরিবর্তন করতে পারেন
+      profit: totalBalance * 0.05 
     });
   } catch (err) {
     res.status(500).json({ message: "Stats error" });
@@ -153,10 +155,11 @@ app.post('/api/admin/update-balance', auth, adminOnly, async (req, res) => {
     
     if (!user) return res.status(404).json({ message: "User not found" });
 
+    const numAmount = parseFloat(amount);
     if (type === 'add') {
-      user.balance += parseFloat(amount);
+      user.balance += numAmount;
     } else if (type === 'deduct') {
-      user.balance -= parseFloat(amount);
+      user.balance -= numAmount;
     }
 
     await user.save();
@@ -191,11 +194,12 @@ app.post('/api/trade', auth, async (req, res) => {
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ message: "User not found" });
 
+    const numAmount = parseFloat(amount);
     if (type === 'buy') {
-      if (user.balance < amount) return res.status(400).json({ message: "Insufficient balance" });
-      user.balance -= parseFloat(amount);
+      if (user.balance < numAmount) return res.status(400).json({ message: "Insufficient balance" });
+      user.balance -= numAmount;
     } else if (type === 'sell') {
-      user.balance += parseFloat(amount);
+      user.balance += numAmount;
     }
 
     await user.save();
@@ -203,27 +207,6 @@ app.post('/api/trade', auth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ message: "Trade failed" });
   }
-});
-
-app.post('/api/deposit', auth, async (req, res) => {
-  try {
-    const { amount } = req.body;
-    const user = await User.findById(req.user.id);
-    user.balance += parseFloat(amount);
-    await user.save();
-    res.json({ message: "Deposit Success", newBalance: user.balance });
-  } catch (err) { res.status(500).json({ message: "Deposit Failed" }); }
-});
-
-app.post('/api/withdraw', auth, async (req, res) => {
-  try {
-    const { amount } = req.body;
-    const user = await User.findById(req.user.id);
-    if (user.balance < amount) return res.status(400).json({ message: "Insufficient balance" });
-    user.balance -= parseFloat(amount);
-    await user.save();
-    res.json({ message: "Withdraw Success", newBalance: user.balance });
-  } catch (err) { res.status(500).json({ message: "Withdraw Failed" }); }
 });
 
 // --- Server Start ---

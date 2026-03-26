@@ -1,30 +1,50 @@
 const mongoose = require('mongoose');
 
 const UserSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
+  name: { 
+    type: String, 
+    required: [true, "নাম দেওয়া বাধ্যতামূলক"] 
+  },
+  email: { 
+    type: String, 
+    required: [true, "ইমেইল দেওয়া বাধ্যতামূলক"], 
+    unique: true,
+    lowercase: true,
+    trim: true
+  },
+  password: { 
+    type: String, 
+    required: [true, "পাসওয়ার্ড দেওয়া বাধ্যতামূলক"] 
+  },
   
-  // ১. রোল ম্যানেজমেন্ট (সবচেয়ে গুরুত্বপূর্ণ)
+  // ১. রোল ম্যানেজমেন্ট
   role: { 
     type: String, 
     enum: ['user', 'admin'], 
     default: 'user' 
   },
 
-  // ২. অ্যাকাউন্ট স্ট্যাটাস (ক্লায়েন্ট যেন কাউকে ব্যান করতে পারে)
+  // ২. অ্যাকাউন্ট স্ট্যাটাস
   status: { 
     type: String, 
     enum: ['active', 'banned', 'pending'], 
     default: 'active' 
   },
 
-  balance: { type: Number, default: 10000 },
+  balance: { 
+    type: Number, 
+    default: 0 // শুরুতে ০ রাখা প্রফেশনাল, পরে এডমিন থেকে এড করবেন
+  },
   
-  // ৩. প্রোফাইল পিকচার (ঐচ্ছিক কিন্তু প্রফেশনাল লুকের জন্য ভালো)
-  profileImage: { type: String, default: '' },
+  // ৩. প্রোফাইল পিকচার
+  profileImage: { 
+    type: String, 
+    default: '' 
+  }
 
-  createdAt: { type: Date, default: Date.now }
+}, { 
+  // এটি অটোমেটিক createdAt এবং updatedAt তৈরি করে দেবে
+  timestamps: true 
 });
 
 module.exports = mongoose.model('User', UserSchema);
