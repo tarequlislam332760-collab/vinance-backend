@@ -15,10 +15,10 @@ const app = express();
 // --- Middleware & CORS Configuration ---
 app.use(express.json());
 
-// আপনার Vercel ফ্রন্টএন্ডের সাথে ব্যাকএন্ড কানেক্ট করার জন্য এই অংশটি খুবই জরুরি
+// Vercel এবং Localhost দুই জায়গার জন্যই CORS কনফিগারেশন
 app.use(cors({
   origin: ["https://my-project-sage.vercel.app", "http://localhost:5173"], 
-  methods: ["GET", "POST", "PUT", "DELETE"],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   credentials: true
 }));
 
@@ -41,13 +41,26 @@ const adminOnly = async (req, res, next) => {
   }
 };
 
+// --- Default Route (সার্ভার চেক করার জন্য) ---
+app.get("/", (req, res) => {
+  res.send("🚀 Vinance Backend is Live and Running!");
+});
+
 // --- Auth Routes ---
 app.post('/api/register', async (req, res) => {
+  console.log("📝 Registration Attempt:", req.body);
   try {
     const { name, email, password } = req.body;
-    let user = await User.findOne({ email });
-    if (user) return res.status(400).json({ message: "User already exists" });
 
+    // ডাটা চেক
+    if (!name || !email || !password) {
+      return res.status(400).json({ message: "সবগুলো ঘর পূরণ করুন (All fields required)" });
+    }
+
+    let user = await User.findOne({ email });
+    if (user) return res.status(400).json({ message: "এই ইমেইল দিয়ে আগেই অ্যাকাউন্ট খোলা হয়েছে" });
+
+    // পাসওয়ার্ড হ্যাশ করা
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
@@ -55,14 +68,16 @@ app.post('/api/register', async (req, res) => {
       name,
       email,
       password: hashedPassword,
-      balance: 0, 
+      balance: 10000, // আপনার মডেল অনুযায়ী ডিফল্ট ব্যালেন্স
       role: 'user'
     });
 
     await user.save();
+    console.log("✅ User Registered:", email);
     res.json({ message: "Registration Successful" });
   } catch (err) {
-    res.status(500).json({ message: "Registration Failed" });
+    console.error("❌ Register Error:", err.message);
+    res.status(500).json({ message: "Registration Failed", error: err.message });
   }
 });
 
@@ -70,10 +85,10 @@ app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ message: "Invalid Credentials" });
+    if (!user) return res.status(400).json({ message: "ইমেইল বা পাসওয়ার্ড ভুল" });
 
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ message: "Invalid Credentials" });
+    if (!isMatch) return res.status(400).json({ message: "ইমেইল বা পাসওয়ার্ড ভুল" });
 
     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '24h' });
     
@@ -133,10 +148,9 @@ app.put('/api/admin/users/:id', auth, adminOnly, async (req, res) => {
   }
 });
 
-app.post('/api/admin/:type-balance', auth, adminOnly, async (req, res) => {
+app.post('/api/admin/update-balance', auth, adminOnly, async (req, res) => {
   try {
-    const { userId, amount } = req.body;
-    const { type } = req.params; 
+    const { userId, amount, type } = req.body;
     const user = await User.findById(userId);
     
     if (!user) return res.status(404).json({ message: "User not found" });
@@ -148,7 +162,7 @@ app.post('/api/admin/:type-balance', auth, adminOnly, async (req, res) => {
     }
 
     await user.save();
-    res.json({ message: `Balance updated successfully` });
+    res.json({ message: `Balance updated successfully`, newBalance: user.balance });
   } catch (err) {
     res.status(500).json({ message: "Balance update failed" });
   }
@@ -175,7 +189,7 @@ app.get('/api/profile', auth, async (req, res) => {
 
 app.post('/api/trade', auth, async (req, res) => {
   try {
-    const { type, amount, symbol } = req.body;
+    const { type, amount } = req.body;
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ message: "User not found" });
 
@@ -215,5 +229,7 @@ app.post('/api/withdraw', auth, async (req, res) => {
 });
 
 // --- Server Start ---
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server Running on port ${PORT}`));
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 Server Running on port ${PORT}`);
+});
