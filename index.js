@@ -12,214 +12,97 @@ const auth = require('./middleware/auth');
 dotenv.config();
 const app = express();
 
-// --- Middleware & CORS Configuration ---
+// --- Middleware & CORS ---
 app.use(express.json());
-
-// ✅ প্রোডাকশন লেভেল CORS ফিক্স
 app.use(cors({
-  origin: function (origin, callback) {
-    // যেকোনো অরিজিন থেকে রিকোয়েস্ট এলাউ করবে
-    if (!origin) return callback(null, true);
-    return callback(null, true);
-  },
+  origin: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true
 }));
 
-// ✅ OPTIONS রিকোয়েস্ট ফিক্স (লগের সেই এররটি এখানেই ছিল)
-app.options("/*", cors()); 
+app.options("/*", cors());
 
 // --- Database Connection ---
 mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ MongoDB Connected Successfully"))
-  .catch((err) => console.error("❌ DB Connection Error:", err.message));
+  .then(() => console.log("✅ MongoDB Connected"))
+  .catch((err) => console.error("❌ DB Error:", err.message));
 
-// --- Admin Authorization Middleware ---
+// --- Admin Auth Middleware ---
 const adminOnly = async (req, res, next) => {
   try {
     const user = await User.findById(req.user.id);
-    if (user && user.role === 'admin') {
-      next();
-    } else {
-      res.status(403).json({ message: "Access Denied: Admins Only" });
-    }
+    if (user && user.role === 'admin') return next();
+    res.status(403).json({ message: "Access Denied: Admins Only" });
   } catch (err) {
     res.status(500).json({ message: "Admin verification failed" });
   }
 };
 
-// --- Default Route ---
-app.get("/", (req, res) => {
-  res.send("🚀 Vinance Backend is Live and Running!");
-});
+// --- Routes ---
+app.get("/", (req, res) => res.send("🚀 Vinance Backend is Live!"));
 
-// --- Auth Routes ---
-
-// ১. রেজিস্ট্রেশন রাউট
+// Registration
 app.post('/api/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
-
-    if (!name || !email || !password) {
-      return res.status(400).json({ message: "সবগুলো ঘর পূরণ করুন" });
-    }
-
     let user = await User.findOne({ email });
-    if (user) {
-      return res.status(400).json({ message: "এই ইমেইল দিয়ে আগেই অ্যাকাউন্ট খোলা হয়েছে" });
-    }
+    if (user) return res.status(400).json({ message: "ইমেইলটি আগেই ব্যবহার করা হয়েছে" });
 
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    user = new User({
-      name,
-      email,
-      password: hashedPassword,
-      balance: 5000, 
-      role: 'user'
-    });
-
+    user = new User({ name, email, password: hashedPassword, balance: 5000, role: 'user' });
     await user.save();
-    console.log("New User Registered:", email);
     res.status(201).json({ message: "Registration Successful", success: true });
   } catch (err) {
-    console.error("Register Error:", err.message);
-    res.status(500).json({ message: "Registration Failed", error: err.message });
+    res.status(500).json({ message: "Server Error", error: err.message });
   }
 });
 
-// ২. লগইন রাউট
+// Login
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     const user = await User.findOne({ email });
-    if (!user) return res.status(400).json({ message: "ইমেইল বা পাসওয়ার্ড ভুল" });
+    if (!user) return res.status(400).json({ message: "ভুল ইমেইল বা পাসওয়ার্ড" });
 
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ message: "ইমেইল বা পাসওয়ার্ড ভুল" });
+    if (!isMatch) return res.status(400).json({ message: "ভুল ইমেইল বা পাসওয়ার্ড" });
 
     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
-    
-    res.json({ 
-      token, 
-      user: { 
-        id: user._id, 
-        name: user.name, 
-        email: user.email, 
-        balance: user.balance, 
-        role: user.role 
-      } 
-    });
-  } catch (err) { 
-    res.status(500).json({ message: "Server Error", error: err.message }); 
+    res.json({ token, user: { id: user._id, name: user.name, email: user.email, balance: user.balance, role: user.role } });
+  } catch (err) {
+    res.status(500).json({ message: "Server Error" });
   }
 });
 
-// --- Admin Panel API ---
+// Admin Stats & Users
 app.get('/api/admin/users', auth, adminOnly, async (req, res) => {
-  try {
-    const users = await User.find().select('-password').sort({ createdAt: -1 });
-    res.json(users);
-  } catch (err) {
-    res.status(500).json({ message: "Error fetching users" });
-  }
-});
-
-app.get('/api/admin/stats', auth, adminOnly, async (req, res) => {
-  try {
-    const userCount = await User.countDocuments();
-    const allUsers = await User.find({});
-    const totalBalance = allUsers.reduce((sum, u) => sum + (u.balance || 0), 0);
-    
-    res.json({
-      users: userCount,
-      deposit: totalBalance, 
-      withdraw: totalBalance * 0.1, 
-      profit: totalBalance * 0.05 
-    });
-  } catch (err) {
-    res.status(500).json({ message: "Stats error" });
-  }
-});
-
-app.put('/api/admin/users/:id', auth, adminOnly, async (req, res) => {
-  try {
-    const { name, balance, role } = req.body;
-    const updatedUser = await User.findByIdAndUpdate(
-      req.params.id, 
-      { name, balance: parseFloat(balance), role }, 
-      { new: true }
-    );
-    res.json(updatedUser);
-  } catch (err) {
-    res.status(500).json({ message: "Update failed" });
-  }
+  const users = await User.find().select('-password').sort({ createdAt: -1 });
+  res.json(users);
 });
 
 app.post('/api/admin/update-balance', auth, adminOnly, async (req, res) => {
-  try {
-    const { userId, amount, type } = req.body;
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: "User not found" });
-
-    const numAmount = parseFloat(amount);
-    if (type === 'add') {
-      user.balance += numAmount;
-    } else if (type === 'deduct') {
-      user.balance -= numAmount;
-    }
-
-    await user.save();
-    res.json({ message: `Balance updated successfully`, newBalance: user.balance });
-  } catch (err) {
-    res.status(500).json({ message: "Balance update failed" });
-  }
+  const { userId, amount, type } = req.body;
+  const user = await User.findById(userId);
+  if (type === 'add') user.balance += parseFloat(amount);
+  else user.balance -= parseFloat(amount);
+  await user.save();
+  res.json({ message: "Balance Updated", newBalance: user.balance });
 });
 
-app.delete('/api/admin/users/:id', auth, adminOnly, async (req, res) => {
-  try {
-    await User.findByIdAndDelete(req.params.id);
-    res.json({ message: "User Deleted Successfully" });
-  } catch (err) {
-    res.status(500).json({ message: "Failed to delete user" });
-  }
-});
-
-// --- User Routes ---
+// User Profile
 app.get('/api/profile', auth, async (req, res) => {
-  try {
-    const user = await User.findById(req.user.id).select('-password');
-    res.json({ user }); 
-  } catch (err) { 
-    res.status(500).json({ message: "Error fetching profile" }); 
-  }
+  const user = await User.findById(req.user.id).select('-password');
+  res.json({ user });
 });
 
-app.post('/api/trade', auth, async (req, res) => {
-  try {
-    const { type, amount } = req.body;
-    const user = await User.findById(req.user.id);
-    if (!user) return res.status(404).json({ message: "User not found" });
+// --- Vercel Export (মেইন পরিবর্তন এখানে) ---
+module.exports = app; 
 
-    const numAmount = parseFloat(amount);
-    if (type === 'buy') {
-      if (user.balance < numAmount) return res.status(400).json({ message: "Insufficient balance" });
-      user.balance -= numAmount;
-    } else if (type === 'sell') {
-      user.balance += numAmount;
-    }
-
-    await user.save();
-    res.json({ message: "Trade Successful!", newBalance: user.balance });
-  } catch (err) {
-    res.status(500).json({ message: "Trade failed" });
-  }
-});
-
-// --- Server Start ---
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Server Running on port ${PORT}`);
-});
+// লোকাল হোস্টে চালানোর জন্য
+if (process.env.NODE_ENV !== 'production') {
+  const PORT = process.env.PORT || 10000;
+  app.listen(PORT, () => console.log(`🚀 Server on port ${PORT}`));
+}
