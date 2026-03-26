@@ -18,7 +18,7 @@ app.use(express.json());
 // ✅ প্রোডাকশন লেভেল CORS ফিক্স
 app.use(cors({
   origin: function (origin, callback) {
-    // যেকোনো অরিজিন থেকে রিকোয়েস্ট এলাউ করবে (মোবাইল বা ওয়েব অ্যাপের জন্য নিরাপদ)
+    // যেকোনো অরিজিন থেকে রিকোয়েস্ট এলাউ করবে
     if (!origin) return callback(null, true);
     return callback(null, true);
   },
@@ -27,18 +27,36 @@ app.use(cors({
   credentials: true
 }));
 
-// OPTIONS রিকোয়েস্ট হ্যান্ডেল করা
-app.options("*", cors());
+// ✅ OPTIONS রিকোয়েস্ট ফিক্স (লগের সেই এররটি এখানেই ছিল)
+app.options("/*", cors()); 
 
 // --- Database Connection ---
-// নিশ্চিত করুন আপনার .env ফাইলে MONGO_URI ঠিক আছে
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected Successfully"))
   .catch((err) => console.error("❌ DB Connection Error:", err.message));
 
+// --- Admin Authorization Middleware ---
+const adminOnly = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (user && user.role === 'admin') {
+      next();
+    } else {
+      res.status(403).json({ message: "Access Denied: Admins Only" });
+    }
+  } catch (err) {
+    res.status(500).json({ message: "Admin verification failed" });
+  }
+};
+
+// --- Default Route ---
+app.get("/", (req, res) => {
+  res.send("🚀 Vinance Backend is Live and Running!");
+});
+
 // --- Auth Routes ---
 
-// ১. রেজিস্ট্রেশন রাউট (এখানে আমি একটু এরর হ্যান্ডলিং বাড়িয়েছি)
+// ১. রেজিস্ট্রেশন রাউট
 app.post('/api/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -47,27 +65,24 @@ app.post('/api/register', async (req, res) => {
       return res.status(400).json({ message: "সবগুলো ঘর পূরণ করুন" });
     }
 
-    // ইমেইল চেক
     let user = await User.findOne({ email });
     if (user) {
       return res.status(400).json({ message: "এই ইমেইল দিয়ে আগেই অ্যাকাউন্ট খোলা হয়েছে" });
     }
 
-    // পাসওয়ার্ড হ্যাশ করা
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // নতুন ইউজার তৈরি
     user = new User({
       name,
       email,
       password: hashedPassword,
-      balance: 5000, // আপনি চাইলে ডেমো ব্যালেন্স দিতে পারেন
+      balance: 5000, 
       role: 'user'
     });
 
     await user.save();
-    console.log("New User Registered:", email); // আপনার টার্মিনালে চেক করার জন্য
+    console.log("New User Registered:", email);
     res.status(201).json({ message: "Registration Successful", success: true });
   } catch (err) {
     console.error("Register Error:", err.message);
@@ -102,7 +117,106 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-// ... বাকি সব কোড (Admin & User Routes) আগের মতোই থাকবে ...
+// --- Admin Panel API ---
+app.get('/api/admin/users', auth, adminOnly, async (req, res) => {
+  try {
+    const users = await User.find().select('-password').sort({ createdAt: -1 });
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ message: "Error fetching users" });
+  }
+});
+
+app.get('/api/admin/stats', auth, adminOnly, async (req, res) => {
+  try {
+    const userCount = await User.countDocuments();
+    const allUsers = await User.find({});
+    const totalBalance = allUsers.reduce((sum, u) => sum + (u.balance || 0), 0);
+    
+    res.json({
+      users: userCount,
+      deposit: totalBalance, 
+      withdraw: totalBalance * 0.1, 
+      profit: totalBalance * 0.05 
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Stats error" });
+  }
+});
+
+app.put('/api/admin/users/:id', auth, adminOnly, async (req, res) => {
+  try {
+    const { name, balance, role } = req.body;
+    const updatedUser = await User.findByIdAndUpdate(
+      req.params.id, 
+      { name, balance: parseFloat(balance), role }, 
+      { new: true }
+    );
+    res.json(updatedUser);
+  } catch (err) {
+    res.status(500).json({ message: "Update failed" });
+  }
+});
+
+app.post('/api/admin/update-balance', auth, adminOnly, async (req, res) => {
+  try {
+    const { userId, amount, type } = req.body;
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const numAmount = parseFloat(amount);
+    if (type === 'add') {
+      user.balance += numAmount;
+    } else if (type === 'deduct') {
+      user.balance -= numAmount;
+    }
+
+    await user.save();
+    res.json({ message: `Balance updated successfully`, newBalance: user.balance });
+  } catch (err) {
+    res.status(500).json({ message: "Balance update failed" });
+  }
+});
+
+app.delete('/api/admin/users/:id', auth, adminOnly, async (req, res) => {
+  try {
+    await User.findByIdAndDelete(req.params.id);
+    res.json({ message: "User Deleted Successfully" });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to delete user" });
+  }
+});
+
+// --- User Routes ---
+app.get('/api/profile', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('-password');
+    res.json({ user }); 
+  } catch (err) { 
+    res.status(500).json({ message: "Error fetching profile" }); 
+  }
+});
+
+app.post('/api/trade', auth, async (req, res) => {
+  try {
+    const { type, amount } = req.body;
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const numAmount = parseFloat(amount);
+    if (type === 'buy') {
+      if (user.balance < numAmount) return res.status(400).json({ message: "Insufficient balance" });
+      user.balance -= numAmount;
+    } else if (type === 'sell') {
+      user.balance += numAmount;
+    }
+
+    await user.save();
+    res.json({ message: "Trade Successful!", newBalance: user.balance });
+  } catch (err) {
+    res.status(500).json({ message: "Trade failed" });
+  }
+});
 
 // --- Server Start ---
 const PORT = process.env.PORT || 10000;
