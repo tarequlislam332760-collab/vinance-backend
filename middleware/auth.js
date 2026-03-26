@@ -8,14 +8,14 @@ const auth = (req, res, next) => {
       return res.status(401).json({ message: "No token, authorization denied" });
     }
 
-    // Token ভেরিফাই করা হচ্ছে
+    // টোকেন ভেরিফাই করা হচ্ছে
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     
-    // decoded-এ থাকা 'id' কে req.user-এ সেট করা হচ্ছে যাতে সব রাউটে পাওয়া যায়
+    // decoded ডাটা req.user এ সেট করা হচ্ছে
     req.user = decoded; 
     next();
   } catch (err) {
-    res.status(401).json({ message: "Token is not valid" });
+    res.status(401).json({ message: "Token is not valid or expired" });
   }
 };
 
