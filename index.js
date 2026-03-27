@@ -11,7 +11,7 @@ const auth = require('./middleware/auth');
 dotenv.config();
 const app = express();
 
-// --- Middleware & CORS Fix ---
+// --- Middleware & CORS ---
 app.use(express.json());
 app.use(cors({
   origin: true, 
@@ -41,25 +41,21 @@ const adminOnly = async (req, res, next) => {
 // --- Routes ---
 app.get("/", (req, res) => res.send("🚀 Vinance Backend is Live!"));
 
-// ✅ ১. Register Route (এটি আগে ছিল না, তাই ফেইল করছিল)
+// ✅ ১. Register Route
 app.post('/api/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
-
-    // ইমেইল চেক
     let user = await User.findOne({ email });
-    if (user) return res.status(400).json({ message: "এই ইমেইল দিয়ে আগেই অ্যাকাউন্ট খোলা হয়েছে" });
+    if (user) return res.status(400).json({ message: "এই ইমেইল দিয়ে আগেই অ্যাকাউন্ট খোলা হয়েছে" });
 
-    // পাসওয়ার্ড হ্যাশ করা (নিরাপত্তার জন্য)
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // নতুন ইউজার ডাটাবেজে সেভ (আপনার মডেল অনুযায়ী)
     user = new User({
       name,
       email,
       password: hashedPassword,
-      balance: 5000, // আপনি শুরুতে ৫০০০ বোনাস দিতে চেয়েছিলেন
+      balance: 5000, 
       role: 'user',
       status: 'active'
     });
@@ -71,7 +67,7 @@ app.post('/api/register', async (req, res) => {
   }
 });
 
-// ✅ ২. Login Route (আপনার দেওয়া কোড)
+// ✅ ২. Login Route
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -86,6 +82,17 @@ app.post('/api/login', async (req, res) => {
       token, 
       user: { id: user._id, name: user.name, email: user.email, balance: user.balance, role: user.role } 
     });
+  } catch (err) {
+    res.status(500).json({ message: "Server Error" });
+  }
+});
+
+// ✅ ৩. Profile Route (এটি আপনার কোডে ছিল না, এখন যোগ করা হয়েছে)
+app.get('/api/profile', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('-password');
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.json({ user });
   } catch (err) {
     res.status(500).json({ message: "Server Error" });
   }
