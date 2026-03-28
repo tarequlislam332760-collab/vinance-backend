@@ -8,12 +8,12 @@ const jwt = require('jsonwebtoken');
 
 const app = express();
 
-// --- ১. মিডলওয়্যার (Vercel & Localhost Friendly) ---
+// --- ১. মিডলওয়্যার (CORS Updated with your Frontend URL) ---
 app.use(cors({
   origin: [
     "http://localhost:5173", 
     "http://localhost:3000", 
-    "https://vinance-app.vercel.app" // আপনার ফ্রন্টএন্ডের ভার্সেল লিঙ্ক এখানে দিবেন
+    "https://vinance-frontend.vercel.app" // আপনার নতুন ফ্রন্টএন্ড লিঙ্কটি এখানে সেট করা হয়েছে
   ],
   credentials: true
 }));
