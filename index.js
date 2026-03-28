@@ -8,6 +8,7 @@ const jwt = require('jsonwebtoken');
 
 const app = express();
 
+// --- ১. মিডলওয়্যার (CORS Fixed) ---
 app.use(cors({
   origin: [
     "http://localhost:5173", 
@@ -18,17 +19,18 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// ডাটাবেজ কানেকশন
 const MONGO_URI = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/vinance";
 mongoose.connect(MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected!"))
   .catch(err => console.error("❌ MongoDB Connection Error:", err));
 
-// --- Models ---
+// --- ২. মডেলস ---
 const UserSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true },
   email: { type: String, unique: true, required: true, lowercase: true, trim: true },
   password: { type: String, required: true },
-  balance: { type: Number, default: 0 },
+  balance: { type: Number, default: 0 }, // ডিফল্ট ব্যালেন্স ০ রাখাই ভালো
   role: { type: String, enum: ['user', 'admin'], default: 'user', trim: true }
 }, { timestamps: true });
 
@@ -47,7 +49,7 @@ const TransactionSchema = new mongoose.Schema({
 
 const Transaction = mongoose.models.Transaction || mongoose.model('Transaction', TransactionSchema);
 
-// --- Middleware ---
+// --- ৩. মিডলওয়্যার ---
 const auth = (req, res, next) => {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.split(' ')[1];
@@ -64,13 +66,9 @@ const adminAuth = (req, res, next) => {
   else res.status(403).json({ message: "Admins Only!" });
 };
 
-// --- Routes ---
+// --- ৪. এপিআই রাউটস ---
 
-// ১. এই রুটটি যোগ করলাম যাতে "Cannot GET /" না আসে
-app.get('/', (req, res) => {
-  res.send("Vinance Server is Running Successfully!");
-});
-
+// প্রোফাইল
 app.get('/api/profile', auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select('-password');
@@ -78,6 +76,7 @@ app.get('/api/profile', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Server Error" }); }
 });
 
+// ট্রানজেকশন লিস্ট
 app.get('/api/transactions', auth, async (req, res) => {
   try {
     const transactions = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
@@ -85,6 +84,7 @@ app.get('/api/transactions', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error" }); }
 });
 
+// রেজিস্ট্রেশন
 app.post('/api/register', async (req, res) => {
   try {
     const { name, email, password, role } = req.body;
@@ -97,13 +97,14 @@ app.post('/api/register', async (req, res) => {
       email: email.toLowerCase(), 
       password: hashedPassword, 
       role: role || 'user',
-      balance: 5000 
+      balance: 5000 // টেস্ট করার জন্য ৫০০০ বোনাস
     }); 
     await user.save();
     res.status(201).json({ message: "Registration successful!" });
   } catch (err) { res.status(400).json({ message: "Registration failed" }); }
 });
 
+// লগইন
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -115,6 +116,8 @@ app.post('/api/login', async (req, res) => {
     res.json({ token, user: { id: user._id, name: user.name, balance: user.balance, role: user.role } });
   } catch (err) { res.status(500).json({ message: "Login error" }); }
 });
+
+// --- ৫. ডিপোজিট ও উইথড্র (Fixed Logic) ---
 
 app.post('/api/deposit', auth, async (req, res) => {
   try {
@@ -143,6 +146,7 @@ app.post('/api/withdraw', auth, async (req, res) => {
     if (!numAmount || numAmount <= 0) return res.status(400).json({ message: "Invalid amount" });
     if (user.balance < numAmount) return res.status(400).json({ message: "Insufficient balance!" });
 
+    // উইথড্র করার সাথে সাথে ব্যালেন্স কেটে নেওয়া হয়
     user.balance -= numAmount;
     await user.save();
 
@@ -160,6 +164,7 @@ app.post('/api/withdraw', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Withdrawal failed" }); }
 });
 
+// ট্রেড
 app.post('/api/trade', auth, async (req, res) => {
   try {
     const { type, amount, symbol } = req.body;
@@ -187,40 +192,38 @@ app.post('/api/trade', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Trade failed" }); }
 });
 
-// Admin APIs
+// --- ৬. অ্যাডমিন কন্ট্রোল (Fixed Status Logic) ---
+
 app.get('/api/admin/all-data', auth, adminAuth, async (req, res) => {
   try {
-    const users = await User.find().select('-password');
-    const requests = await Transaction.find({ status: 'pending' }).populate('userId', 'name email');
+    const users = await User.find({}).select('-password');
+    const requests = await Transaction.find({ status: 'pending' });
     res.json({ users, requests });
-  } catch (err) { res.status(500).json({ message: "Admin data fetch failed" }); }
-});
-
-app.post('/api/admin/update-balance', auth, adminAuth, async (req, res) => {
-  try {
-    const { userId, balance } = req.body;
-    await User.findByIdAndUpdate(userId, { balance: parseFloat(balance) });
-    res.json({ message: "Balance updated successfully" });
-  } catch (err) { res.status(500).json({ message: "Failed to update balance" }); }
+  } catch (err) { res.status(500).json({ message: "Error" }); }
 });
 
 app.post('/api/admin/handle-request', auth, adminAuth, async (req, res) => {
+  const { requestId, status } = req.body; // status: 'completed' or 'rejected'
   try {
-    const { requestId, status } = req.body;
     const trx = await Transaction.findById(requestId);
-    if (!trx) return res.status(404).json({ message: "Request not found" });
+    if (!trx || trx.status !== 'pending') return res.status(400).json({ message: "Already processed or not found" });
 
-    if (status === 'approved' && trx.type === 'deposit') {
-      const user = await User.findById(trx.userId);
-      user.balance += trx.amount;
-      await user.save();
+    if (status === 'completed' && trx.type === 'deposit') {
+      // ডিপোজিট অ্যাপ্রুভ করলে ইউজারের ব্যালেন্স বাড়বে
+      await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
+    }
+    
+    if (status === 'rejected' && trx.type === 'withdraw') {
+      // উইথড্র রিজেক্ট করলে কাটা ব্যালেন্স ফেরত দেওয়া হবে
+      await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
     }
 
     trx.status = status;
     await trx.save();
-    res.json({ message: `Request ${status}` });
-  } catch (err) { res.status(500).json({ message: "Action failed" }); }
+    res.json({ message: `Request ${status} successfully` });
+  } catch (err) { res.status(500).json({ message: "Admin action failed" }); }
 });
 
+app.get("/", (req, res) => res.send("Vinance Server Live"));
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Server on port ${PORT}`));
