@@ -23,6 +23,7 @@ mongoose.connect(MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected!"))
   .catch(err => console.error("❌ MongoDB Connection Error:", err));
 
+// --- Models ---
 const UserSchema = new mongoose.Schema({
   name: { type: String, required: true, trim: true },
   email: { type: String, unique: true, required: true, lowercase: true, trim: true },
@@ -46,6 +47,7 @@ const TransactionSchema = new mongoose.Schema({
 
 const Transaction = mongoose.models.Transaction || mongoose.model('Transaction', TransactionSchema);
 
+// --- Middleware ---
 const auth = (req, res, next) => {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.split(' ')[1];
@@ -61,6 +63,13 @@ const adminAuth = (req, res, next) => {
   if (req.user && req.user.role === 'admin') next();
   else res.status(403).json({ message: "Admins Only!" });
 };
+
+// --- Routes ---
+
+// ১. এই রুটটি যোগ করলাম যাতে "Cannot GET /" না আসে
+app.get('/', (req, res) => {
+  res.send("Vinance Server is Running Successfully!");
+});
 
 app.get('/api/profile', auth, async (req, res) => {
   try {
@@ -178,7 +187,7 @@ app.post('/api/trade', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Trade failed" }); }
 });
 
-// এডমিন ডাটা এপিআই
+// Admin APIs
 app.get('/api/admin/all-data', auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select('-password');
@@ -187,7 +196,6 @@ app.get('/api/admin/all-data', auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Admin data fetch failed" }); }
 });
 
-// এডমিন ব্যালেন্স আপডেট
 app.post('/api/admin/update-balance', auth, adminAuth, async (req, res) => {
   try {
     const { userId, balance } = req.body;
@@ -196,7 +204,6 @@ app.post('/api/admin/update-balance', auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Failed to update balance" }); }
 });
 
-// এডমিন রিকোয়েস্ট হ্যান্ডেল
 app.post('/api/admin/handle-request', auth, adminAuth, async (req, res) => {
   try {
     const { requestId, status } = req.body;
