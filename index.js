@@ -17,30 +17,32 @@ app.use(express.json());
 
 // ডাটাবেজ কানেকশন
 const MONGO_URI = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/vinance";
-mongoose.connect(MONGO_URI).then(() => console.log("✅ DB Connected")).catch(err => console.log(err));
+mongoose.connect(MONGO_URI)
+  .then(() => console.log("✅ DB Connected Successfully"))
+  .catch(err => console.log("❌ DB Connection Error:", err));
 
 // --- ২. মডেলস ---
 const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, unique: true, required: true },
   password: { type: String, required: true },
-  balance: { type: Number, default: 5000 },
+  balance: { type: Number, default: 0 }, // শুরুতে ব্যালেন্স ০ রাখাই ভালো
   role: { type: String, enum: ['user', 'admin'], default: 'user' }
 }, { timestamps: true }));
 
 const Transaction = mongoose.models.Transaction || mongoose.model('Transaction', new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  type: { type: String, enum: ['deposit', 'withdraw', 'trade'], required: true },
+  type: { type: String, enum: ['deposit', 'withdraw', 'trade', 'investment'], required: true },
   amount: { type: Number, required: true },
   method: { type: String, default: 'System' },
   status: { type: String, enum: ['pending', 'approved', 'rejected', 'completed'], default: 'pending' },
   createdAt: { type: Date, default: Date.now }
 }));
 
-// --- ৩. মিডলওয়্যার ---
+// --- ৩. অথেন্টিকেশন মিডলওয়্যার ---
 const auth = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ message: "No Token" });
+  if (!token) return res.status(401).json({ message: "No Token Provided" });
   try {
     req.user = jwt.verify(token, (process.env.JWT_SECRET || 'secret_123').trim());
     next();
@@ -52,7 +54,22 @@ const adminAuth = (req, res, next) => {
   else res.status(403).json({ message: "Admins Only!" });
 };
 
-// --- ৪. এপিআই রাউটস (Public & User) ---
+// --- ৪. পাবলিক রাউটস (Register & Login) ---
+
+app.post('/api/register', async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
+    if (existingUser) return res.status(400).json({ message: "User already exists" });
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const newUser = new User({ name, email: email.toLowerCase(), password: hashedPassword });
+    await newUser.save();
+
+    res.status(201).json({ message: "Registration Successful" });
+  } catch (err) { res.status(500).json({ message: "Registration failed" }); }
+});
+
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body;
   const user = await User.findOne({ email: email.toLowerCase() });
@@ -62,42 +79,130 @@ app.post('/api/login', async (req, res) => {
   } else res.status(400).json({ message: "Invalid credentials" });
 });
 
-// --- ৫. অ্যাডমিন কন্ট্রোল (নতুন ফিচারসহ) ---
+// --- ৫. ইউজার ফাংশনালিটি ---
 
-// ৫.১ সব ডাটা একসাথে আনা
+// ৫.১ ইউজারের প্রোফাইল/ব্যালেন্স রিফ্রেশ রাউট (নতুন)
+app.get('/api/user/me', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('-password');
+    res.json(user);
+  } catch (err) { res.status(500).json({ message: "Failed to fetch user" }); }
+});
+
+// ৫.২ সব ট্রানজ্যাকশন হিস্ট্রি (ড্যাশবোর্ড ও ওয়ালেটের জন্য) (নতুন)
+app.get('/api/transactions', auth, async (req, res) => {
+  try {
+    const trxs = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
+    res.json(trxs);
+  } catch (err) { res.status(500).json({ message: "Failed to fetch transactions" }); }
+});
+
+// ৫.৩ ডিপোজিট রিকোয়েস্ট
+app.post('/api/deposit', auth, async (req, res) => {
+  try {
+    const { amount, method } = req.body;
+    const newTrx = new Transaction({
+      userId: req.user.id,
+      type: 'deposit',
+      amount: parseFloat(amount),
+      method: method || 'Manual',
+      status: 'pending'
+    });
+    await newTrx.save();
+    res.json({ message: "Deposit request submitted. Pending admin approval." });
+  } catch (err) { res.status(500).json({ message: "Deposit failed" }); }
+});
+
+// ৫.৪ উইথড্র রিকোয়েস্ট
+app.post('/api/withdraw', auth, async (req, res) => {
+  try {
+    const { amount, method } = req.body;
+    const user = await User.findById(req.user.id);
+    if (user.balance < amount) return res.status(400).json({ message: "Insufficient balance" });
+
+    user.balance -= parseFloat(amount);
+    await user.save();
+
+    const newTrx = new Transaction({
+      userId: req.user.id,
+      type: 'withdraw',
+      amount: parseFloat(amount),
+      method: method || 'Manual',
+      status: 'pending'
+    });
+    await newTrx.save();
+    res.json({ message: "Withdraw request submitted. Pending approval." });
+  } catch (err) { res.status(500).json({ message: "Withdrawal failed" }); }
+});
+
+// ৫.৫ ট্রেডিং (Buy/Sell)
+app.post('/api/trade', auth, async (req, res) => {
+  try {
+    const { type, amount } = req.body;
+    const user = await User.findById(req.user.id);
+
+    if (type === 'buy') {
+      if (user.balance < amount) return res.status(400).json({ message: "Insufficient balance to buy" });
+      user.balance -= parseFloat(amount);
+    } else {
+      user.balance += parseFloat(amount);
+    }
+
+    await user.save();
+    const newTrx = new Transaction({
+      userId: req.user.id,
+      type: 'trade',
+      amount: parseFloat(amount),
+      status: 'completed'
+    });
+    await newTrx.save();
+    res.json({ message: "Trade successful", newBalance: user.balance });
+  } catch (err) { res.status(500).json({ message: "Trade failed" }); }
+});
+
+// --- ৬. অ্যাডমিন কন্ট্রোল ---
+
+// ৬.১ সব ডাটা আনা
 app.get('/api/admin/all-data', auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select('-password');
     const requests = await Transaction.find({ status: 'pending' }).populate('userId', 'name email');
     res.json({ users, requests });
-  } catch (err) { res.status(500).send("Error"); }
+  } catch (err) { res.status(500).send("Error fetching data"); }
 });
 
-// ৫.২ ডিপোজিট/উইথড্র রিকোয়েস্ট হ্যান্ডেল করা
+// ৬.২ রিকোয়েস্ট হ্যান্ডেল করা (Approve/Reject)
 app.post('/api/admin/handle-request', auth, adminAuth, async (req, res) => {
-  const { requestId, status } = req.body; 
+  const { requestId, status } = req.body;
   try {
     const trx = await Transaction.findById(requestId);
-    if (!trx || trx.status !== 'pending') return res.status(400).send("Handled");
-    if (status === 'completed' && trx.type === 'deposit') await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
-    if (status === 'rejected' && trx.type === 'withdraw') await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
-    trx.status = status; await trx.save();
-    res.json({ message: "Success" });
-  } catch (err) { res.status(500).send("Error"); }
+    if (!trx || trx.status !== 'pending') return res.status(400).send("Already processed");
+
+    if (status === 'completed' && trx.type === 'deposit') {
+      await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
+    }
+    if (status === 'rejected' && trx.type === 'withdraw') {
+      await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
+    }
+
+    trx.status = status;
+    await trx.save();
+    res.json({ message: `Request ${status} successfully` });
+  } catch (err) { res.status(500).send("Admin action failed"); }
 });
 
-// ৫.৩ ইউজারের ব্যালেন্স ম্যানুয়ালি আপডেট করা (নতুন)
+// ৬.৩ ম্যানুয়াল ব্যালেন্স আপডেট
 app.post('/api/admin/update-balance', auth, adminAuth, async (req, res) => {
   const { userId, balance } = req.body;
   try {
     await User.findByIdAndUpdate(userId, { balance: parseFloat(balance) });
-    res.json({ message: "Balance updated!" });
-  } catch (err) { res.status(500).send("Failed"); }
+    res.json({ message: "User balance updated manually!" });
+  } catch (err) { res.status(500).send("Failed to update balance"); }
 });
 
 app.get("/", (req, res) => res.send("Vinance Server Live"));
 
-if (process.env.NODE_ENV !== 'production') {
-  app.listen(5000, () => console.log(`🚀 Port 5000`));
-}
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
 module.exports = app;
