@@ -107,7 +107,7 @@ app.get('/api/profile', auth, async (req, res) => {
   res.json(user);
 });
 
-// --- ৫. ডিপোজিট, উইথড্র ও ট্রানজেকশন (FIXED) ---
+// --- ৫. ডিপোজিট, উইথড্র ও ট্রানজেকশন ---
 app.post('/api/deposit', auth, async (req, res) => {
   try {
     const trx = new Transaction({ userId: req.user.id, type: 'deposit', ...req.body });
@@ -135,9 +135,8 @@ app.get('/api/transactions', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
-// ট্রেড ও ইনভেস্টমেন্ট
 app.post('/api/trade', auth, async (req, res) => {
-  res.json({ message: "Trade executed" }); // আপনার ট্রেড লজিক এখানে দিন
+  res.json({ message: "Trade executed" }); 
 });
 
 app.post('/api/investment/invest', auth, async (req, res) => {
@@ -159,7 +158,8 @@ app.get('/api/investment/plans', async (req, res) => {
   res.json(plans);
 });
 
-// --- ৬. অ্যাডমিন কমান্ড সেন্টার (FIXED) ---
+// --- ৬. অ্যাডমিন কমান্ড সেন্টার (FIXED SECTION) ---
+
 app.get('/api/admin/all-data', auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select('-password');
@@ -173,15 +173,24 @@ app.get('/api/admin/all-data', auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error" }); }
 });
 
+// **ফিক্সড: হ্যান্ডেল রিকোয়েস্ট (Action Failed Error এর সমাধান)**
 app.post('/api/admin/handle-request', auth, adminAuth, async (req, res) => {
   try {
-    const { requestId, status } = req.body;
+    const { requestId, status } = req.body; 
     const trx = await Transaction.findById(requestId);
     if (!trx) return res.status(404).json({ message: "Not found" });
-    if (status === 'approved' && trx.type === 'deposit') {
-      await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
+
+    if (status === 'approved' && trx.status === 'pending') {
+      if (trx.type === 'deposit') {
+        await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
+      }
+      trx.status = 'approved';
+    } else if (status === 'rejected' && trx.status === 'pending') {
+      if (trx.type === 'withdraw') {
+        await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
+      }
+      trx.status = 'rejected';
     }
-    trx.status = status;
     await trx.save();
     res.json({ message: "Action Successful" });
   } catch (err) { res.status(500).json({ message: "Action failed" }); }
@@ -193,10 +202,22 @@ app.post('/api/admin/update-balance', auth, adminAuth, async (req, res) => {
   res.json({ message: "Success" });
 });
 
+// **ফিক্সড: প্ল্যান তৈরি (Failed to Create Plan এর সমাধান)**
 app.post('/api/admin/plans', auth, adminAuth, async (req, res) => {
-  const plan = new Plan(req.body);
-  await plan.save();
-  res.status(201).json({ message: "Created" });
+  try {
+    // ফ্রন্টএন্ড থেকে আসা ডাটা সরাসরি সেভ করা
+    const plan = new Plan({
+        ...req.body,
+        minAmount: Number(req.body.minAmount),
+        maxAmount: Number(req.body.maxAmount),
+        profitPercent: Number(req.body.profitPercent),
+        duration: Number(req.body.duration)
+    });
+    await plan.save();
+    res.status(201).json({ message: "Plan Created Successfully" });
+  } catch (err) { 
+    res.status(500).json({ message: "Failed to create plan" }); 
+  }
 });
 
 app.get("/", (req, res) => res.send("Server Live"));
