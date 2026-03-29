@@ -26,7 +26,7 @@ const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema(
   name: { type: String, required: true },
   email: { type: String, unique: true, required: true },
   password: { type: String, required: true },
-  balance: { type: Number, default: 5000 }, // রেজিস্ট্রেশনে অটো ৫০০০ ব্যালেন্স
+  balance: { type: Number, default: 5000 },
   role: { type: String, default: 'user' }
 }, { timestamps: true }));
 
@@ -66,63 +66,67 @@ const adminAuth = (req, res, next) => {
   else res.status(403).json({ message: "Admins Only!" });
 };
 
-// --- ৪. এপিআই রাউটস ---
+// --- ৪. এপিআই রাউটস (অপারেশনস) ---
 
-// রেজিস্ট্রেশন (FIXED)
+// রেজিস্ট্রেশন ও লগইন
 app.post('/api/register', async (req, res) => {
   try {
-    const { name, email, password, role } = req.body;
-    if (!email || !password) return res.status(400).json({ message: "Email and Password required!" });
-    
+    const { name, email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ message: "Fields missing" });
     const cleanEmail = email.toLowerCase().trim();
-    const existingUser = await User.findOne({ email: cleanEmail });
-    if (existingUser) return res.status(400).json({ message: "Email already exists" });
-
+    const exists = await User.findOne({ email: cleanEmail });
+    if (exists) return res.status(400).json({ message: "Email already exists" });
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({ name, email: cleanEmail, password: hashedPassword, role: role || 'user', balance: 5000 }); 
+    const user = new User({ name, email: cleanEmail, password: hashedPassword });
     await user.save();
     res.status(201).json({ message: "Success" });
-  } catch (err) { res.status(500).json({ message: "Registration Error" }); }
+  } catch (err) { res.status(500).json({ message: "Error" }); }
 });
 
-// লগইন
 app.post('/api/login', async (req, res) => {
-  try {
-    const user = await User.findOne({ email: req.body.email.toLowerCase().trim() });
-    if (!user || !(await bcrypt.compare(req.body.password, user.password))) return res.status(400).json({ message: "Invalid credentials" });
-    const token = jwt.sign({ id: user._id, role: user.role }, (process.env.JWT_SECRET || 'secret_123').trim(), { expiresIn: '7d' });
-    res.json({ token, user: { id: user._id, name: user.name, balance: user.balance, role: user.role } });
-  } catch (err) { res.status(500).json({ message: "Login failed" }); }
+  const user = await User.findOne({ email: req.body.email.toLowerCase().trim() });
+  if (!user || !(await bcrypt.compare(req.body.password, user.password))) return res.status(400).json({ message: "Invalid" });
+  const token = jwt.sign({ id: user._id, role: user.role }, (process.env.JWT_SECRET || 'secret_123').trim(), { expiresIn: '7d' });
+  res.json({ token, user: { id: user._id, name: user.name, balance: user.balance, role: user.role } });
 });
 
-app.get('/api/profile', auth, async (req, res) => {
-  const user = await User.findById(req.user.id).select('-password');
-  res.json(user);
+// ডিপোজিট (নতুন লজিক যোগ করা হয়েছে)
+app.post('/api/deposit', auth, async (req, res) => {
+  const { amount, method } = req.body;
+  const trx = new Transaction({ userId: req.user.id, type: 'deposit', amount, method });
+  await trx.save();
+  res.json({ message: "Deposit Pending" });
 });
 
-// ইনভেস্টমেন্ট ও প্ল্যান রাউট
-app.get('/api/investments/plans', async (req, res) => {
-  const plans = await Plan.find({ status: true });
-  res.json(plans);
-});
-
-app.post('/api/investments/invest', auth, async (req, res) => {
-  try {
-    const { planId, amount } = req.body;
-    const user = await User.findById(req.user.id);
-    const plan = await Plan.findById(planId);
-    if (user.balance < amount) return res.status(400).json({ message: "Insufficient Balance" });
-    
+// ট্রেড (Buy/Sell) লজিক
+app.post('/api/trade', auth, async (req, res) => {
+  const { type, amount, symbol } = req.body;
+  const user = await User.findById(req.user.id);
+  if (type === 'buy') {
+    if (user.balance < amount) return res.status(400).json({ message: "Insufficient balance" });
     user.balance -= amount;
-    const expireAt = new Date(); expireAt.setHours(expireAt.getHours() + plan.duration);
-    const inv = new Investment({ userId: user._id, planId, amount, expireAt });
-    
-    await user.save(); await inv.save();
-    res.json({ message: "Investment Successful" });
-  } catch (err) { res.status(500).json({ message: "Investment failed" }); }
+  } else {
+    user.balance += amount;
+  }
+  const trx = new Transaction({ userId: req.user.id, type: 'trade', amount, symbol, status: 'completed' });
+  await user.save(); await trx.save();
+  res.json({ message: "Trade Success", balance: user.balance });
 });
 
-// অ্যাডমিন রাউট
+// ইনভেস্টমেন্ট রাউট
+app.post('/api/investments/invest', auth, async (req, res) => {
+  const { planId, amount } = req.body;
+  const user = await User.findById(req.user.id);
+  const plan = await Plan.findById(planId);
+  if (user.balance < amount) return res.status(400).json({ message: "Insufficient" });
+  user.balance -= amount;
+  const expireAt = new Date(); expireAt.setHours(expireAt.getHours() + (plan.duration || 24));
+  const inv = new Investment({ userId: user._id, planId, amount, expireAt });
+  await user.save(); await inv.save();
+  res.json({ message: "Invest Success" });
+});
+
+// --- ৫. অ্যাডমিন কন্ট্রোল ---
 app.get('/api/admin/all-data', auth, adminAuth, async (req, res) => {
   const users = await User.find({}).select('-password');
   const requests = await Transaction.find({ status: 'pending' }).populate('userId', 'name email');
@@ -130,21 +134,20 @@ app.get('/api/admin/all-data', auth, adminAuth, async (req, res) => {
   res.json({ users, requests, investments });
 });
 
-app.post('/api/admin/update-balance', auth, adminAuth, async (req, res) => {
-  try {
-    await User.findByIdAndUpdate(req.body.userId, { balance: req.body.balance });
-    res.json({ message: "Balance Updated" });
-  } catch (err) { res.status(500).json({ message: "Failed" }); }
-});
-
-app.post('/api/admin/add-plan', auth, adminAuth, async (req, res) => {
-  const plan = new Plan(req.body); await plan.save(); res.json(plan);
+app.post('/api/admin/handle-request', auth, adminAuth, async (req, res) => {
+  const { requestId, status } = req.body;
+  const trx = await Transaction.findById(requestId);
+  if (status === 'approved' && trx.type === 'deposit') {
+    await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
+  }
+  trx.status = status === 'approved' ? 'completed' : 'rejected';
+  await trx.save();
+  res.json({ message: "Request Handled" });
 });
 
 app.get("/", (req, res) => res.send("Vinance Server Live"));
 
-if (process.env.NODE_ENV !== 'production') {
-  const PORT = process.env.PORT || 5000;
-  app.listen(PORT, () => console.log(`🚀 Server on port ${PORT}`));
-}
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`🚀 Server on port ${PORT}`));
+
 module.exports = app;
