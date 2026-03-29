@@ -1,17 +1,11 @@
 const jwt = require('jsonwebtoken');
 
 const auth = (req, res, next) => {
+  const token = req.header('Authorization')?.split(' ')[1];
+  if (!token) return res.status(401).json({ message: "No token, authorization denied" });
+
   try {
-    const token = req.header('Authorization')?.split(' ')[1];
-
-    if (!token) {
-      return res.status(401).json({ message: "No token, authorization denied" });
-    }
-
-    // টোকেন ভেরিফাই করা হচ্ছে
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret_123');
-    
-    // decoded ডাটা req.user এ সেট করা হচ্ছে
+    const decoded = jwt.verify(token, (process.env.JWT_SECRET || 'secret_123').trim());
     req.user = decoded; 
     next();
   } catch (err) {
@@ -19,4 +13,9 @@ const auth = (req, res, next) => {
   }
 };
 
-module.exports = auth;
+const adminAuth = (req, res, next) => {
+  if (req.user && req.user.role === 'admin') next();
+  else res.status(403).json({ message: "Admins Only!" });
+};
+
+module.exports = { auth, adminAuth };
