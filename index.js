@@ -8,7 +8,7 @@ const jwt = require('jsonwebtoken');
 
 const app = express();
 
-// --- ১. মিডলওয়্যার (CORS FIXED) ---
+// --- ১. মিডলওয়্যার ---
 const allowedOrigins = [
   "http://localhost:5173", 
   "http://localhost:3000", 
@@ -51,7 +51,7 @@ const Transaction = mongoose.models.Transaction || mongoose.model('Transaction',
   type: { type: String, enum: ['deposit', 'withdraw', 'trade', 'investment'], required: true },
   amount: { type: Number, required: true },
   method: { type: String, default: 'System' },
-  transactionId: { type: String }, // TRX ID এর জন্য
+  transactionId: { type: String },
   address: String,
   status: { type: String, enum: ['pending', 'approved', 'rejected', 'completed'], default: 'pending' },
   createdAt: { type: Date, default: Date.now }
@@ -67,7 +67,7 @@ const Investment = mongoose.models.Investment || mongoose.model('Investment', ne
   amount: Number, profit: Number, status: { type: String, default: 'active' }, expireAt: Date
 }, { timestamps: true }));
 
-// --- ৩. অথেন্টিকেশন মিডলওয়্যার ---
+// --- ৩. মিডলওয়্যার ---
 const auth = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ message: "Access Denied!" });
@@ -82,8 +82,7 @@ const adminAuth = (req, res, next) => {
   else res.status(403).json({ message: "Admins Only!" });
 };
 
-// --- ৪. ইউজার এপিআই রাউটস ---
-
+// --- ৪. ইউজার এপিআই ---
 app.post('/api/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -108,66 +107,72 @@ app.get('/api/profile', auth, async (req, res) => {
   res.json(user);
 });
 
-app.get('/api/transactions', auth, async (req, res) => {
-  const trxs = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
-  res.json(trxs);
+app.get('/api/investment/plans', async (req, res) => {
+  const plans = await Plan.find({ status: true });
+  res.json(plans);
 });
 
-// ডিপোজিট ও উইথড্র লজিক
-app.post('/api/deposit', auth, async (req, res) => {
-  const { amount, method, transactionId } = req.body;
-  const trx = new Transaction({ userId: req.user.id, type: 'deposit', amount, method, transactionId });
-  await trx.save();
-  res.json({ message: "Deposit Pending" });
+app.post('/api/investment/invest', auth, async (req, res) => {
+  try {
+    const { planId, amount } = req.body;
+    const user = await User.findById(req.user.id);
+    const plan = await Plan.findById(planId);
+    if (!plan || user.balance < amount) return res.status(400).json({ message: "Invalid Request" });
+
+    user.balance -= amount;
+    await user.save();
+
+    const expireAt = new Date();
+    expireAt.setHours(expireAt.getHours() + plan.duration);
+
+    const inv = new Investment({ userId: user._id, planId: plan._id, amount, expireAt });
+    await inv.save();
+    res.json({ message: "Investment successful" });
+  } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
-app.post('/api/withdraw', auth, async (req, res) => {
-  const { amount, address, method } = req.body;
-  const user = await User.findById(req.user.id);
-  if (user.balance < amount) return res.status(400).json({ message: "Insufficient balance" });
-  user.balance -= amount; // টাকা কেটে রাখা হলো
-  await user.save();
-  const trx = new Transaction({ userId: req.user.id, type: 'withdraw', amount, address, method });
-  await trx.save();
-  res.json({ message: "Withdrawal request sent", balance: user.balance });
+// --- ৫. অ্যাডমিন এপিআই (AdminPanel.jsx এর সাথে মিল রেখে) ---
+
+app.get('/api/admin/all-data', auth, adminAuth, async (req, res) => {
+  try {
+    const users = await User.find().select('-password');
+    const requests = await Transaction.find().populate('userId', 'name email');
+    const investments = await Investment.find().populate('userId', 'name email').populate('planId');
+    
+    // ফ্রন্টএন্ড ম্যাপ করার সুবিধার জন্য userId কে user হিসেবে পাঠানো হচ্ছে
+    const formattedRequests = requests.map(r => ({ ...r._doc, user: r.userId }));
+    const formattedInvestments = investments.map(i => ({ ...i._doc, user: i.userId }));
+
+    res.json({ users, requests: formattedRequests, investments: formattedInvestments });
+  } catch (err) { res.status(500).json({ message: "Error" }); }
 });
 
-// --- ৫. অ্যাডমিন এপিআই রাউটস (আপনার ফ্রন্টএন্ডের সাথে মিল রেখে) ---
-
-// সব পেন্ডিং রিকোয়েস্ট দেখা
-app.get('/api/admin/deposits', auth, adminAuth, async (req, res) => {
-  const requests = await Transaction.find({ status: 'pending' }).populate('userId', 'name email');
-  // ফ্রন্টএন্ডে req.user?.name খোঁজে, তাই userId কে user হিসেবে পাঠানো হচ্ছে
-  const formatted = requests.map(r => ({ ...r._doc, user: r.userId }));
-  res.json(formatted);
+app.post('/api/admin/update-balance', auth, adminAuth, async (req, res) => {
+  const { userId, balance } = req.body;
+  await User.findByIdAndUpdate(userId, { balance });
+  res.json({ message: "Success" });
 });
 
-// রিকোয়েস্ট হ্যান্ডেল করা (Approve/Reject)
-app.put('/api/admin/deposit/:id', auth, adminAuth, async (req, res) => {
-  const { status } = req.body;
-  const trx = await Transaction.findById(req.params.id);
-  if (!trx || trx.status !== 'pending') return res.status(404).json({ message: "Request not found" });
+app.post('/api/admin/handle-request', auth, adminAuth, async (req, res) => {
+  const { requestId, status } = req.body;
+  const trx = await Transaction.findById(requestId);
+  if (!trx) return res.status(404).json({ message: "Not found" });
 
   if (status === 'approved') {
-    if (trx.type === 'deposit') {
-      await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
-    }
+    if (trx.type === 'deposit') await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
     trx.status = 'approved';
   } else {
-    if (trx.type === 'withdraw') {
-      await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } }); // রিজেক্ট করলে টাকা ফেরত
-    }
+    if (trx.type === 'withdraw') await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
     trx.status = 'rejected';
   }
   await trx.save();
-  res.json({ message: "Action Successful" });
+  res.json({ message: "Success" });
 });
 
-// নতুন প্ল্যান তৈরি
 app.post('/api/admin/plans', auth, adminAuth, async (req, res) => {
   const plan = new Plan(req.body);
   await plan.save();
-  res.status(201).json({ message: "Plan Created" });
+  res.json({ message: "Plan Created" });
 });
 
 app.get("/", (req, res) => res.send("Server Live"));
