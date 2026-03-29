@@ -9,26 +9,7 @@ const jwt = require('jsonwebtoken');
 const app = express();
 
 // --- ১. মিডলওয়্যার (CORS FIXED) ---
-const allowedOrigins = [
-  "http://localhost:5173", 
-  "http://localhost:3000", 
-  "https://vinance-frontend.vercel.app",
-  "https://vinance-frontend-vjqa.vercel.app"
-];
-
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(null, true); 
-    }
-  },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
-}));
-
+app.use(cors({ origin: true, credentials: true })); 
 app.use(express.json());
 
 // --- ২. ডাটাবেজ কানেকশন ---
@@ -48,16 +29,21 @@ const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema(
 
 const Transaction = mongoose.models.Transaction || mongoose.model('Transaction', new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  type: { type: String, enum: ['deposit', 'withdraw', 'trade', 'investment'], required: true },
+  type: { type: String, required: true }, // deposit, withdraw, trade
   amount: { type: Number, required: true },
   method: { type: String, default: 'System' },
   transactionId: { type: String },
-  status: { type: String, enum: ['pending', 'approved', 'rejected', 'completed'], default: 'pending' },
+  status: { type: String, default: 'pending' },
   createdAt: { type: Date, default: Date.now }
 }));
 
 const Plan = mongoose.models.Plan || mongoose.model('Plan', new mongoose.Schema({
-  name: String, minAmount: Number, maxAmount: Number, profitPercent: Number, duration: Number, status: { type: Boolean, default: true }
+  name: { type: String, required: true },
+  minAmount: { type: Number, required: true },
+  maxAmount: { type: Number, required: true },
+  profitPercent: { type: Number, required: true },
+  duration: { type: Number, required: true },
+  status: { type: Boolean, default: true }
 }));
 
 const Investment = mongoose.models.Investment || mongoose.model('Investment', new mongoose.Schema({
@@ -66,10 +52,10 @@ const Investment = mongoose.models.Investment || mongoose.model('Investment', ne
   amount: Number, profit: Number, status: { type: String, default: 'active' }, expireAt: Date
 }, { timestamps: true }));
 
-// --- ৪. অথেন্টিকেশন মিডলওয়্যার ---
+// --- ৪. অথেন্টিকেশন ---
 const auth = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
-  if (!token) return res.status(401).json({ message: "Access Denied!" });
+  if (!token) return res.status(401).json({ message: "No Token" });
   try {
     const secret = (process.env.JWT_SECRET || 'secret_123').trim();
     req.user = jwt.verify(token, secret);
@@ -82,7 +68,7 @@ const adminAuth = (req, res, next) => {
   else res.status(403).json({ message: "Admins Only!" });
 };
 
-// --- ৫. ইউজার এপিআই (লগইন/রেজিস্টার) ---
+// --- ৫. ইউজার এপিআই ---
 app.post('/api/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -105,21 +91,60 @@ app.post('/api/login', async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Login failed" }); }
 });
 
-// --- ৬. ইনভেস্টমেন্ট লজিক (NEW) ---
+// --- ৬. TRADE লজিক (Trade failed ফিক্স) ---
+app.post('/api/trade', auth, async (req, res) => {
+  try {
+    const { amount, type } = req.body;
+    const user = await User.findById(req.user.id);
+    const tradeAmt = Number(amount);
+
+    if (user.balance < tradeAmt) return res.status(400).json({ message: "Low Balance" });
+    
+    // ট্রেড রেকর্ড রাখা (যাতে এরর না আসে)
+    const trx = new Transaction({ 
+      userId: req.user.id, type: 'trade', amount: tradeAmt, method: type, status: 'completed' 
+    });
+    await trx.save();
+    res.json({ message: `Trade ${type} Success`, balance: user.balance });
+  } catch (err) { res.status(500).json({ message: "Trade failed" }); }
+});
+
+// --- ৭. ADMIN: PLAN তৈরি (Failed to create plan ফিক্স) ---
+app.post('/api/admin/plans', auth, adminAuth, async (req, res) => {
+  try {
+    const { name, minAmount, maxAmount, profitPercent, duration } = req.body;
+    
+    const newPlan = new Plan({
+      name,
+      minAmount: Number(minAmount),
+      maxAmount: Number(maxAmount),
+      profitPercent: Number(profitPercent),
+      duration: Number(duration)
+    });
+
+    await newPlan.save();
+    res.status(201).json({ message: "Plan Created Successfully" });
+  } catch (err) {
+    res.status(500).json({ message: "Failed: " + err.message });
+  }
+});
+
+// --- ৮. ইনভেস্টমেন্ট ও অন্যান্য ---
 app.post('/api/invest', auth, async (req, res) => {
   try {
     const { planId, amount } = req.body;
     const user = await User.findById(req.user.id);
     const plan = await Plan.findById(planId);
+    const investAmt = Number(amount);
 
-    if (user.balance < Number(amount)) return res.status(400).json({ message: "Low Balance" });
+    if (user.balance < investAmt) return res.status(400).json({ message: "Low Balance" });
     
-    user.balance -= Number(amount);
+    user.balance -= investAmt;
     await user.save();
 
     const invest = new Investment({
-      userId: user._id, planId: plan._id, amount: Number(amount),
-      profit: (Number(amount) * plan.profitPercent) / 100,
+      userId: user._id, planId: plan._id, amount: investAmt,
+      profit: (investAmt * plan.profitPercent) / 100,
       expireAt: new Date(Date.now() + plan.duration * 24 * 60 * 60 * 1000)
     });
     await invest.save();
@@ -127,49 +152,7 @@ app.post('/api/invest', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Failed" }); }
 });
 
-// --- ৭. ডিপোজিট ও উইথড্র ---
-app.post('/api/deposit', auth, async (req, res) => {
-  try {
-    const trx = new Transaction({ userId: req.user.id, type: 'deposit', amount: Number(req.body.amount), method: req.body.method, transactionId: req.body.transactionId });
-    await trx.save();
-    res.json({ message: "Deposit Pending" });
-  } catch (err) { res.status(500).json({ message: err.message }); }
-});
-
-app.post('/api/withdraw', auth, async (req, res) => {
-  try {
-    const user = await User.findById(req.user.id);
-    if (user.balance < Number(req.body.amount)) return res.status(400).json({ message: "Low Balance" });
-    user.balance -= Number(req.body.amount);
-    await user.save();
-    const trx = new Transaction({ userId: req.user.id, type: 'withdraw', amount: Number(req.body.amount), method: req.body.method });
-    await trx.save();
-    res.json({ message: "Withdraw Pending", balance: user.balance });
-  } catch (err) { res.status(500).json({ message: err.message }); }
-});
-
-// --- ৮. অ্যাডমিন অল ডাটা ও রিকোয়েস্ট হ্যান্ডলিং ---
-app.get('/api/admin/all-data', auth, adminAuth, async (req, res) => {
-  const users = await User.find().select('-password');
-  const requests = await Transaction.find().populate('userId', 'name email');
-  const investments = await Investment.find().populate('userId', 'name email').populate('planId');
-  res.json({ users, requests, investments });
-});
-
-app.post('/api/admin/handle-request', auth, adminAuth, async (req, res) => {
-  const { requestId, status } = req.body; 
-  const trx = await Transaction.findById(requestId);
-  if (status === 'approved' && trx.type === 'deposit') {
-    await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
-  } else if (status === 'rejected' && trx.type === 'withdraw') {
-    await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
-  }
-  trx.status = status;
-  await trx.save();
-  res.json({ message: "Success" });
-});
-
-app.get("/", (req, res) => res.send("Server running"));
+app.get("/", (req, res) => res.send("Server Running"));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server on port ${PORT}`));
