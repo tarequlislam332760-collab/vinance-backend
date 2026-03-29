@@ -8,11 +8,27 @@ const jwt = require('jsonwebtoken');
 
 const app = express();
 
-// --- ১. মিডলওয়্যার ---
+// --- ১. মিডলওয়্যার (CORS FIXED) ---
+const allowedOrigins = [
+  "http://localhost:5173", 
+  "http://localhost:3000", 
+  "https://vinance-frontend.vercel.app",
+  "https://vinance-frontend-vjqa.vercel.app" // আপনার নতুন ফ্রন্টএন্ড লিঙ্ক
+];
+
 app.use(cors({
-  origin: ["http://localhost:5173", "http://localhost:3000", "https://vinance-frontend.vercel.app"],
-  credentials: true
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
 }));
+
 app.use(express.json());
 
 // ডাটাবেজ কানেকশন
@@ -66,9 +82,9 @@ const adminAuth = (req, res, next) => {
   else res.status(403).json({ message: "Admins Only!" });
 };
 
-// --- ৪. এপিআই রাউটস (অপারেশনস) ---
+// --- ৪. এপিআই রাউটস ---
 
-// রেজিস্ট্রেশন ও লগইন
+// রেজিস্ট্রেশন
 app.post('/api/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -83,14 +99,22 @@ app.post('/api/register', async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error" }); }
 });
 
+// লগইন
 app.post('/api/login', async (req, res) => {
-  const user = await User.findOne({ email: req.body.email.toLowerCase().trim() });
-  if (!user || !(await bcrypt.compare(req.body.password, user.password))) return res.status(400).json({ message: "Invalid" });
-  const token = jwt.sign({ id: user._id, role: user.role }, (process.env.JWT_SECRET || 'secret_123').trim(), { expiresIn: '7d' });
-  res.json({ token, user: { id: user._id, name: user.name, balance: user.balance, role: user.role } });
+  try {
+    const user = await User.findOne({ email: req.body.email.toLowerCase().trim() });
+    if (!user || !(await bcrypt.compare(req.body.password, user.password))) return res.status(400).json({ message: "Invalid" });
+    const token = jwt.sign({ id: user._id, role: user.role }, (process.env.JWT_SECRET || 'secret_123').trim(), { expiresIn: '7d' });
+    res.json({ token, user: { id: user._id, name: user.name, balance: user.balance, role: user.role } });
+  } catch (err) { res.status(500).json({ message: "Login failed" }); }
 });
 
-// ডিপোজিট (নতুন লজিক যোগ করা হয়েছে)
+app.get('/api/profile', auth, async (req, res) => {
+  const user = await User.findById(req.user.id).select('-password');
+  res.json(user);
+});
+
+// ডিপোজিট
 app.post('/api/deposit', auth, async (req, res) => {
   const { amount, method } = req.body;
   const trx = new Transaction({ userId: req.user.id, type: 'deposit', amount, method });
@@ -98,7 +122,7 @@ app.post('/api/deposit', auth, async (req, res) => {
   res.json({ message: "Deposit Pending" });
 });
 
-// ট্রেড (Buy/Sell) লজিক
+// ট্রেড (Buy/Sell)
 app.post('/api/trade', auth, async (req, res) => {
   const { type, amount, symbol } = req.body;
   const user = await User.findById(req.user.id);
@@ -113,7 +137,12 @@ app.post('/api/trade', auth, async (req, res) => {
   res.json({ message: "Trade Success", balance: user.balance });
 });
 
-// ইনভেস্টমেন্ট রাউট
+// ইনভেস্টমেন্ট
+app.get('/api/investments/plans', async (req, res) => {
+  const plans = await Plan.find({ status: true });
+  res.json(plans);
+});
+
 app.post('/api/investments/invest', auth, async (req, res) => {
   const { planId, amount } = req.body;
   const user = await User.findById(req.user.id);
@@ -143,6 +172,11 @@ app.post('/api/admin/handle-request', auth, adminAuth, async (req, res) => {
   trx.status = status === 'approved' ? 'completed' : 'rejected';
   await trx.save();
   res.json({ message: "Request Handled" });
+});
+
+app.post('/api/admin/update-balance', auth, adminAuth, async (req, res) => {
+  await User.findByIdAndUpdate(req.body.userId, { balance: req.body.balance });
+  res.json({ message: "Balance Updated" });
 });
 
 app.get("/", (req, res) => res.send("Vinance Server Live"));
