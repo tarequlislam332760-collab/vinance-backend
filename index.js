@@ -1,23 +1,31 @@
-const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '.env') }); 
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+require('dotenv').config(); // Vercel-এ path.join দরকার নেই
 
 const app = express();
 
+// CORS Middleware
 app.use(cors({
   origin: ["http://localhost:5173", "http://localhost:3000", "https://vinance-frontend.vercel.app"],
   credentials: true
 }));
 app.use(express.json());
 
-// ডাটাবেজ কানেকশন
-mongoose.connect(process.env.MONGO_URI || "mongodb://127.0.0.1:27017/vinance")
-  .then(() => console.log("✅ DB Connected"))
-  .catch(err => console.log("❌ DB Error:", err));
+// ডাটাবেজ কানেকশন (Vercel-এর জন্য অপ্টিমাইজড)
+let isConnected = false;
+const connectDB = async () => {
+  if (isConnected) return;
+  try {
+    const db = await mongoose.connect(process.env.MONGO_URI);
+    isConnected = db.connections[0].readyState;
+    console.log("✅ DB Connected");
+  } catch (err) {
+    console.log("❌ DB Error:", err);
+  }
+};
 
 // ইউজার মডেল
 const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema({
@@ -28,7 +36,13 @@ const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema(
   role: { type: String, enum: ['user', 'admin'], default: 'user' }
 }, { timestamps: true }));
 
-// রাউট কানেকশন
+// প্রতিটি রিকোয়েস্টে ডাটাবেজ চেক করবে
+app.use(async (req, res, next) => {
+  await connectDB();
+  next();
+});
+
+// রাউট কানেকশন (নিশ্চিত করুন routes ফোল্ডার এবং ফাইলের নাম ছোট হাতের)
 const investmentRoutes = require('./routes/investmentRoutes');
 app.use('/api', investmentRoutes);
 
@@ -43,28 +57,39 @@ app.post('/api/register', async (req, res) => {
     const newUser = new User({ name, email: email.toLowerCase(), password: hashedPassword });
     await newUser.save();
     res.status(201).json({ message: "Registration Successful" });
-  } catch (err) { res.status(500).json({ message: "Registration failed" }); }
+  } catch (err) { 
+    res.status(500).json({ message: "Registration failed", error: err.message }); 
+  }
 });
 
 app.post('/api/login', async (req, res) => {
-  const { email, password } = req.body;
-  const user = await User.findOne({ email: email.toLowerCase() });
-  
-  if (user && await bcrypt.compare(password, user.password)) {
-    const token = jwt.sign(
-      { id: user._id, role: user.role }, 
-      (process.env.JWT_SECRET || 'secret_123').trim(),
-      { expiresIn: '7d' }
-    );
-    res.json({ token, user: { id: user._id, name: user.name, balance: user.balance, role: user.role } });
-  } else {
-    res.status(400).json({ message: "Invalid credentials" });
+  try {
+    const { email, password } = req.body;
+    const user = await User.findOne({ email: email.toLowerCase() });
+    
+    if (user && await bcrypt.compare(password, user.password)) {
+      const secret = (process.env.JWT_SECRET || 'secret_123').trim();
+      const token = jwt.sign(
+        { id: user._id, role: user.role }, 
+        secret,
+        { expiresIn: '7d' }
+      );
+      res.json({ token, user: { id: user._id, name: user.name, balance: user.balance, role: user.role } });
+    } else {
+      res.status(400).json({ message: "Invalid credentials" });
+    }
+  } catch (err) {
+    res.status(500).json({ message: "Login error", error: err.message });
   }
 });
 
 app.get("/", (req, res) => res.send("Vinance Server Live"));
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+// --- এই অংশটি Vercel-এর জন্য সবচেয়ে গুরুত্বপূর্ণ ---
+module.exports = app; 
 
-module.exports = app;
+// লোকাল পিসিতে চালানোর জন্য
+if (process.env.NODE_ENV !== 'production') {
+  const PORT = process.env.PORT || 5000;
+  app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+}
