@@ -31,13 +31,17 @@ app.use(cors({
 
 app.use(express.json());
 
-// ডাটাবেজ কানেকশন
+// --- ২. ডাটাবেজ কানেকশন (নতুন লজিক যা আপনি চেয়েছিলেন) ---
 const MONGO_URI = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/vinance";
+
 mongoose.connect(MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected!"))
-  .catch(err => console.error("❌ MongoDB Connection Error:", err));
+  .catch(err => {
+    console.error("❌ MongoDB Connection Error:", err.message);
+    // সার্ভার যেন ক্রাশ না করে সেজন্য লগ রাখা হলো
+  });
 
-// --- ২. মডেলস ---
+// --- ৩. মডেলস ---
 const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, unique: true, required: true },
@@ -67,7 +71,7 @@ const Investment = mongoose.models.Investment || mongoose.model('Investment', ne
   amount: Number, profit: Number, status: { type: String, default: 'active' }, expireAt: Date
 }, { timestamps: true }));
 
-// --- ৩. অথেন্টিকেশন মিডলওয়্যার ---
+// --- ৪. অথেন্টিকেশন মিডলওয়্যার ---
 const auth = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ message: "Access Denied!" });
@@ -82,24 +86,34 @@ const adminAuth = (req, res, next) => {
   else res.status(403).json({ message: "Admins Only!" });
 };
 
-// --- ৪. ইউজার এপিআই ---
+// --- ৫. ইউজার এপিআই (রেজিস্টার ও লগইন) ---
 app.post('/api/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
     const exists = await User.findOne({ email: email.toLowerCase() });
-    if (exists) return res.status(400).json({ message: "Email exists" });
+    if (exists) return res.status(400).json({ message: "Email already exists!" });
+    
     const hashedPassword = await bcrypt.hash(password, 10);
     const user = new User({ name, email: email.toLowerCase(), password: hashedPassword });
     await user.save();
-    res.status(201).json({ message: "Success" });
-  } catch (err) { res.status(500).json({ message: "Error" }); }
+    res.status(201).json({ message: "Registration successful!" });
+  } catch (err) { 
+    console.error("Register Error:", err);
+    res.status(500).json({ message: "Internal Server Error" }); 
+  }
 });
 
 app.post('/api/login', async (req, res) => {
-  const user = await User.findOne({ email: req.body.email.toLowerCase() });
-  if (!user || !(await bcrypt.compare(req.body.password, user.password))) return res.status(400).json({ message: "Invalid" });
-  const token = jwt.sign({ id: user._id, role: user.role }, (process.env.JWT_SECRET || 'secret_123').trim(), { expiresIn: '7d' });
-  res.json({ token, user: { id: user._id, name: user.name, balance: user.balance, role: user.role } });
+  try {
+    const user = await User.findOne({ email: req.body.email.toLowerCase() });
+    if (!user || !(await bcrypt.compare(req.body.password, user.password))) {
+      return res.status(400).json({ message: "Invalid email or password!" });
+    }
+    const token = jwt.sign({ id: user._id, role: user.role }, (process.env.JWT_SECRET || 'secret_123').trim(), { expiresIn: '7d' });
+    res.json({ token, user: { id: user._id, name: user.name, balance: user.balance, role: user.role } });
+  } catch (err) {
+    res.status(500).json({ message: "Login failed" });
+  }
 });
 
 app.get('/api/profile', auth, async (req, res) => {
@@ -107,24 +121,12 @@ app.get('/api/profile', auth, async (req, res) => {
   res.json(user);
 });
 
-// --- ৫. ডিপোজিট, উইথড্র ও ট্রানজেকশন ---
+// --- ৬. ডিপোজিট ও ট্রানজেকশন ---
 app.post('/api/deposit', auth, async (req, res) => {
   try {
     const trx = new Transaction({ userId: req.user.id, type: 'deposit', ...req.body });
     await trx.save();
     res.json({ message: "Deposit request submitted" });
-  } catch (err) { res.status(500).json({ message: err.message }); }
-});
-
-app.post('/api/withdraw', auth, async (req, res) => {
-  try {
-    const user = await User.findById(req.user.id);
-    if (user.balance < req.body.amount) return res.status(400).json({ message: "Insufficient balance" });
-    user.balance -= Number(req.body.amount);
-    await user.save();
-    const trx = new Transaction({ userId: req.user.id, type: 'withdraw', ...req.body });
-    await trx.save();
-    res.json({ message: "Withdrawal request sent" });
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
@@ -135,31 +137,7 @@ app.get('/api/transactions', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
-app.post('/api/trade', auth, async (req, res) => {
-  res.json({ message: "Trade executed" }); 
-});
-
-app.post('/api/investment/invest', auth, async (req, res) => {
-  try {
-    const { planId, amount } = req.body;
-    const user = await User.findById(req.user.id);
-    const plan = await Plan.findById(planId);
-    if (!plan || user.balance < amount) return res.status(400).json({ message: "Invalid plan or balance" });
-    user.balance -= Number(amount);
-    await user.save();
-    const inv = new Investment({ userId: user._id, planId: plan._id, amount: Number(amount), expireAt: new Date(Date.now() + plan.duration * 3600000) });
-    await inv.save();
-    res.json({ message: "Investment success", balance: user.balance });
-  } catch (err) { res.status(500).json({ message: err.message }); }
-});
-
-app.get('/api/investment/plans', async (req, res) => {
-  const plans = await Plan.find({ status: true });
-  res.json(plans);
-});
-
-// --- ৬. অ্যাডমিন কমান্ড সেন্টার (FIXED SECTION) ---
-
+// --- ৭. অ্যাডমিন প্যানেল (FIXED) ---
 app.get('/api/admin/all-data', auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select('-password');
@@ -173,12 +151,11 @@ app.get('/api/admin/all-data', auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error" }); }
 });
 
-// **ফিক্সড: হ্যান্ডেল রিকোয়েস্ট (Action Failed Error এর সমাধান)**
 app.post('/api/admin/handle-request', auth, adminAuth, async (req, res) => {
   try {
     const { requestId, status } = req.body; 
     const trx = await Transaction.findById(requestId);
-    if (!trx) return res.status(404).json({ message: "Not found" });
+    if (!trx) return res.status(404).json({ message: "Request not found" });
 
     if (status === 'approved' && trx.status === 'pending') {
       if (trx.type === 'deposit') {
@@ -186,9 +163,6 @@ app.post('/api/admin/handle-request', auth, adminAuth, async (req, res) => {
       }
       trx.status = 'approved';
     } else if (status === 'rejected' && trx.status === 'pending') {
-      if (trx.type === 'withdraw') {
-        await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
-      }
       trx.status = 'rejected';
     }
     await trx.save();
@@ -196,16 +170,8 @@ app.post('/api/admin/handle-request', auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Action failed" }); }
 });
 
-app.post('/api/admin/update-balance', auth, adminAuth, async (req, res) => {
-  const { userId, balance } = req.body;
-  await User.findByIdAndUpdate(userId, { balance: Number(balance) });
-  res.json({ message: "Success" });
-});
-
-// **ফিক্সড: প্ল্যান তৈরি (Failed to Create Plan এর সমাধান)**
 app.post('/api/admin/plans', auth, adminAuth, async (req, res) => {
   try {
-    // ফ্রন্টএন্ড থেকে আসা ডাটা সরাসরি সেভ করা
     const plan = new Plan({
         ...req.body,
         minAmount: Number(req.body.minAmount),
@@ -215,12 +181,10 @@ app.post('/api/admin/plans', auth, adminAuth, async (req, res) => {
     });
     await plan.save();
     res.status(201).json({ message: "Plan Created Successfully" });
-  } catch (err) { 
-    res.status(500).json({ message: "Failed to create plan" }); 
-  }
+  } catch (err) { res.status(500).json({ message: "Failed to create plan" }); }
 });
 
-app.get("/", (req, res) => res.send("Server Live"));
+app.get("/", (req, res) => res.send("Server Live and Running"));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server on port ${PORT}`));
