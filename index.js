@@ -22,7 +22,6 @@ mongoose.connect(MONGO_URI)
   .catch(err => console.log("❌ DB Connection Error:", err));
 
 // --- ২. মডেলস (Models) ---
-// ইউজার মডেল
 const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, unique: true, required: true },
@@ -31,7 +30,6 @@ const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema(
   role: { type: String, enum: ['user', 'admin'], default: 'user' }
 }, { timestamps: true }));
 
-// ট্রানজ্যাকশন মডেল
 const Transaction = mongoose.models.Transaction || mongoose.model('Transaction', new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   type: { type: String, enum: ['deposit', 'withdraw', 'trade', 'investment'], required: true },
@@ -41,8 +39,7 @@ const Transaction = mongoose.models.Transaction || mongoose.model('Transaction',
   createdAt: { type: Date, default: Date.now }
 }));
 
-// --- ৩. অথেন্টিকেশন মিডলওয়্যার ---
-// এটি আপনার দেওয়া নতুন লজিক অনুযায়ী আপডেট করা হয়েছে
+// --- ৩. অথেন্টিকেশন মিডলওয়্যার (অভ্যন্তরীণ ব্যবহারের জন্য) ---
 const auth = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ message: "No Token Provided" });
@@ -54,21 +51,11 @@ const auth = (req, res, next) => {
   }
 };
 
-const adminAuth = (req, res, next) => {
-  if (req.user && req.user.role === 'admin') next();
-  else res.status(403).json({ message: "Admins Only!" });
-};
-
-// গুরুত্বপূর্ণ: অন্য ফাইলে ব্যবহারের জন্য এক্সপোর্ট
-module.exports = { auth, adminAuth };
-
-// --- ৪. ইনভেস্টমেন্ট রাউট কানেকশন ---
-// এটি অবশ্যই মিডলওয়্যার এক্সপোর্টের নিচে থাকতে হবে
+// --- ৪. রাউট কানেকশন ---
 const investmentRoutes = require('./routes/investmentRoutes');
 app.use('/api', investmentRoutes);
 
-// --- ৫. পাবলিক ও ইউজার রাউটস (Authentication & Profile) ---
-
+// --- ৫. পাবলিক ও ইউজার রাউটস (Auth & Profile) ---
 app.post('/api/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -107,22 +94,15 @@ app.get('/api/user/me', auth, async (req, res) => {
   }
 });
 
-// --- ৬. ডিপোজিট, উইথড্র ও ট্রেড লজিক ---
-
+// --- ৬. ট্রানজ্যাকশন রাউটস ---
 app.post('/api/deposit', auth, async (req, res) => {
   try {
     const { amount, method } = req.body;
     await new Transaction({ 
-      userId: req.user.id, 
-      type: 'deposit', 
-      amount: parseFloat(amount), 
-      method, 
-      status: 'pending' 
+      userId: req.user.id, type: 'deposit', amount: parseFloat(amount), method, status: 'pending' 
     }).save();
     res.json({ message: "Deposit request submitted" });
-  } catch (err) { 
-    res.status(500).json({ message: "Deposit failed" }); 
-  }
+  } catch (err) { res.status(500).json({ message: "Deposit failed" }); }
 });
 
 app.post('/api/withdraw', auth, async (req, res) => {
@@ -135,20 +115,16 @@ app.post('/api/withdraw', auth, async (req, res) => {
     await user.save();
 
     await new Transaction({ 
-      userId: req.user.id, 
-      type: 'withdraw', 
-      amount: parseFloat(amount), 
-      method, 
-      status: 'pending' 
+      userId: req.user.id, type: 'withdraw', amount: parseFloat(amount), method, status: 'pending' 
     }).save();
     res.json({ message: "Withdraw request submitted" });
-  } catch (err) { 
-    res.status(500).json({ message: "Withdrawal failed" }); 
-  }
+  } catch (err) { res.status(500).json({ message: "Withdrawal failed" }); }
 });
 
-// সার্ভার স্ট্যাটাস চেক
 app.get("/", (req, res) => res.send("Vinance Server Live"));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
+// Vercel-এর জন্য এক্সপোর্ট
+module.exports = app;
