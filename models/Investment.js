@@ -6,7 +6,7 @@ const investmentSchema = new mongoose.Schema({
   amount: { type: Number, required: true },
   profit: { type: Number, default: 0 },
   status: { type: String, enum: ['active', 'completed'], default: 'active' },
-  endDate: { type: Date, required: true }, // ইনভেস্টমেন্ট শেষ হওয়ার সময়
+  expireAt: { type: Date, required: true }
 }, { timestamps: true });
 
 module.exports = mongoose.model('Investment', investmentSchema);
