@@ -9,7 +9,7 @@ const auth = (req, res, next) => {
     }
 
     // টোকেন ভেরিফাই করা হচ্ছে
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret_123');
     
     // decoded ডাটা req.user এ সেট করা হচ্ছে
     req.user = decoded; 
