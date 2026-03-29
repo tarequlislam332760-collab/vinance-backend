@@ -31,14 +31,13 @@ app.use(cors({
 
 app.use(express.json());
 
-// --- ২. ডাটাবেজ কানেকশন (নতুন লজিক যা আপনি চেয়েছিলেন) ---
+// --- ২. ডাটাবেজ কানেকশন ---
 const MONGO_URI = process.env.MONGO_URI || "mongodb://127.0.0.1:27017/vinance";
 
 mongoose.connect(MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected!"))
   .catch(err => {
     console.error("❌ MongoDB Connection Error:", err.message);
-    // সার্ভার যেন ক্রাশ না করে সেজন্য লগ রাখা হলো
   });
 
 // --- ৩. মডেলস ---
@@ -76,7 +75,8 @@ const auth = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ message: "Access Denied!" });
   try {
-    req.user = jwt.verify(token, (process.env.JWT_SECRET || 'secret_123').trim());
+    const secret = (process.env.JWT_SECRET || 'secret_123').trim();
+    req.user = jwt.verify(token, secret);
     next();
   } catch (err) { res.status(401).json({ message: "Invalid Token" }); }
 };
@@ -90,29 +90,44 @@ const adminAuth = (req, res, next) => {
 app.post('/api/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
-    const exists = await User.findOne({ email: email.toLowerCase() });
+    if(!email) return res.status(400).json({ message: "Email is required" });
+    
+    const emailLower = email.toLowerCase().trim();
+    const exists = await User.findOne({ email: emailLower });
     if (exists) return res.status(400).json({ message: "Email already exists!" });
     
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({ name, email: email.toLowerCase(), password: hashedPassword });
+    const user = new User({ name, email: emailLower, password: hashedPassword });
     await user.save();
     res.status(201).json({ message: "Registration successful!" });
   } catch (err) { 
-    console.error("Register Error:", err);
+    console.error("Register Error Details:", err);
     res.status(500).json({ message: "Internal Server Error" }); 
   }
 });
 
 app.post('/api/login', async (req, res) => {
   try {
-    const user = await User.findOne({ email: req.body.email.toLowerCase() });
-    if (!user || !(await bcrypt.compare(req.body.password, user.password))) {
+    const { email, password } = req.body;
+    const emailLower = email.toLowerCase().trim();
+    
+    const user = await User.findOne({ email: emailLower });
+    if (!user) {
       return res.status(400).json({ message: "Invalid email or password!" });
     }
-    const token = jwt.sign({ id: user._id, role: user.role }, (process.env.JWT_SECRET || 'secret_123').trim(), { expiresIn: '7d' });
+    
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: "Invalid email or password!" });
+    }
+    
+    const secret = (process.env.JWT_SECRET || 'secret_123').trim();
+    const token = jwt.sign({ id: user._id, role: user.role }, secret, { expiresIn: '7d' });
+    
     res.json({ token, user: { id: user._id, name: user.name, balance: user.balance, role: user.role } });
   } catch (err) {
-    res.status(500).json({ message: "Login failed" });
+    console.error("Login Error Details:", err);
+    res.status(500).json({ message: "Login failed - Internal Error" });
   }
 });
 
