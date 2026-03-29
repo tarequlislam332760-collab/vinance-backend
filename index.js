@@ -8,12 +8,12 @@ const jwt = require('jsonwebtoken');
 
 const app = express();
 
-// --- ১. মিডলওয়্যার (CORS এ আপনার ফ্রন্টএন্ড লিঙ্ক অ্যাড করা হয়েছে) ---
+// --- ১. মিডলওয়্যার ---
 app.use(cors({
   origin: [
     "http://localhost:5173", 
     "http://localhost:3000", 
-    "https://vinance-frontend.vercel.app" // আপনার দেওয়া অরিজিনাল ফ্রন্টএন্ড লিঙ্ক
+    "https://vinance-frontend.vercel.app"
   ],
   credentials: true
 }));
@@ -67,10 +67,10 @@ const adminAuth = (req, res, next) => {
 };
 
 // --- ৪. এপিআই রাউটস ---
-
 app.get('/api/profile', auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select('-password');
+    if (!user) return res.status(404).json({ message: "User not found" });
     res.json(user);
   } catch (err) { res.status(500).json({ message: "Server Error" }); }
 });
@@ -114,7 +114,6 @@ app.post('/api/login', async (req, res) => {
 });
 
 // --- ৫. ডিপোজিট ও উইথড্র ---
-
 app.post('/api/deposit', auth, async (req, res) => {
   try {
     const { amount, method } = req.body;
@@ -187,11 +186,9 @@ app.post('/api/trade', auth, async (req, res) => {
 });
 
 // --- ৬. অ্যাডমিন কন্ট্রোল ---
-
 app.get('/api/admin/all-data', auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find({}).select('-password');
-    // populate('userId', 'name email') যোগ করা হয়েছে যাতে অ্যাডমিন ইউজারের তথ্য দেখে
     const requests = await Transaction.find({ status: 'pending' }).populate('userId', 'name email');
     res.json({ users, requests });
   } catch (err) { res.status(500).json({ message: "Error" }); }
@@ -217,8 +214,12 @@ app.post('/api/admin/handle-request', auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Admin action failed" }); }
 });
 
-// হোম রুট (যাতে Cannot GET / না আসে)
 app.get("/", (req, res) => res.send("Vinance Server Live & Running"));
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server on port ${PORT}`)); 
+// --- ৭. Vercel ও লোকাল হোস্টিং এর জন্য লিসেন কন্ডিশন ---
+if (process.env.NODE_ENV !== 'production') {
+  const PORT = process.env.PORT || 5000;
+  app.listen(PORT, () => console.log(`🚀 Server on port ${PORT}`));
+}
+
+module.exports = app; // Vercel এর জন্য এটি সবথেকে গুরুত্বপূর্ণ
