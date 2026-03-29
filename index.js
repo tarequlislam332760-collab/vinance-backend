@@ -13,7 +13,7 @@ const allowedOrigins = [
   "http://localhost:5173", 
   "http://localhost:3000", 
   "https://vinance-frontend.vercel.app",
-  "https://vinance-frontend-vjqa.vercel.app" // আপনার নতুন ফ্রন্টএন্ড লিঙ্ক
+  "https://vinance-frontend-vjqa.vercel.app"
 ];
 
 app.use(cors({
@@ -51,7 +51,7 @@ const Transaction = mongoose.models.Transaction || mongoose.model('Transaction',
   type: { type: String, enum: ['deposit', 'withdraw', 'trade', 'investment'], required: true },
   amount: { type: Number, required: true },
   method: { type: String, default: 'System' },
-  symbol: String,
+  transactionId: { type: String }, // TRX ID এর জন্য
   address: String,
   status: { type: String, enum: ['pending', 'approved', 'rejected', 'completed'], default: 'pending' },
   createdAt: { type: Date, default: Date.now }
@@ -82,31 +82,25 @@ const adminAuth = (req, res, next) => {
   else res.status(403).json({ message: "Admins Only!" });
 };
 
-// --- ৪. এপিআই রাউটস ---
+// --- ৪. ইউজার এপিআই রাউটস ---
 
-// রেজিস্ট্রেশন
 app.post('/api/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ message: "Fields missing" });
-    const cleanEmail = email.toLowerCase().trim();
-    const exists = await User.findOne({ email: cleanEmail });
-    if (exists) return res.status(400).json({ message: "Email already exists" });
+    const exists = await User.findOne({ email: email.toLowerCase() });
+    if (exists) return res.status(400).json({ message: "Email exists" });
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({ name, email: cleanEmail, password: hashedPassword });
+    const user = new User({ name, email: email.toLowerCase(), password: hashedPassword });
     await user.save();
     res.status(201).json({ message: "Success" });
   } catch (err) { res.status(500).json({ message: "Error" }); }
 });
 
-// লগইন
 app.post('/api/login', async (req, res) => {
-  try {
-    const user = await User.findOne({ email: req.body.email.toLowerCase().trim() });
-    if (!user || !(await bcrypt.compare(req.body.password, user.password))) return res.status(400).json({ message: "Invalid" });
-    const token = jwt.sign({ id: user._id, role: user.role }, (process.env.JWT_SECRET || 'secret_123').trim(), { expiresIn: '7d' });
-    res.json({ token, user: { id: user._id, name: user.name, balance: user.balance, role: user.role } });
-  } catch (err) { res.status(500).json({ message: "Login failed" }); }
+  const user = await User.findOne({ email: req.body.email.toLowerCase() });
+  if (!user || !(await bcrypt.compare(req.body.password, user.password))) return res.status(400).json({ message: "Invalid" });
+  const token = jwt.sign({ id: user._id, role: user.role }, (process.env.JWT_SECRET || 'secret_123').trim(), { expiresIn: '7d' });
+  res.json({ token, user: { id: user._id, name: user.name, balance: user.balance, role: user.role } });
 });
 
 app.get('/api/profile', auth, async (req, res) => {
@@ -114,74 +108,69 @@ app.get('/api/profile', auth, async (req, res) => {
   res.json(user);
 });
 
-// ডিপোজিট
+app.get('/api/transactions', auth, async (req, res) => {
+  const trxs = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
+  res.json(trxs);
+});
+
+// ডিপোজিট ও উইথড্র লজিক
 app.post('/api/deposit', auth, async (req, res) => {
-  const { amount, method } = req.body;
-  const trx = new Transaction({ userId: req.user.id, type: 'deposit', amount, method });
+  const { amount, method, transactionId } = req.body;
+  const trx = new Transaction({ userId: req.user.id, type: 'deposit', amount, method, transactionId });
   await trx.save();
   res.json({ message: "Deposit Pending" });
 });
 
-// ট্রেড (Buy/Sell)
-app.post('/api/trade', auth, async (req, res) => {
-  const { type, amount, symbol } = req.body;
+app.post('/api/withdraw', auth, async (req, res) => {
+  const { amount, address, method } = req.body;
   const user = await User.findById(req.user.id);
-  if (type === 'buy') {
-    if (user.balance < amount) return res.status(400).json({ message: "Insufficient balance" });
-    user.balance -= amount;
-  } else {
-    user.balance += amount;
-  }
-  const trx = new Transaction({ userId: req.user.id, type: 'trade', amount, symbol, status: 'completed' });
-  await user.save(); await trx.save();
-  res.json({ message: "Trade Success", balance: user.balance });
-});
-
-// ইনভেস্টমেন্ট
-app.get('/api/investments/plans', async (req, res) => {
-  const plans = await Plan.find({ status: true });
-  res.json(plans);
-});
-
-app.post('/api/investments/invest', auth, async (req, res) => {
-  const { planId, amount } = req.body;
-  const user = await User.findById(req.user.id);
-  const plan = await Plan.findById(planId);
-  if (user.balance < amount) return res.status(400).json({ message: "Insufficient" });
-  user.balance -= amount;
-  const expireAt = new Date(); expireAt.setHours(expireAt.getHours() + (plan.duration || 24));
-  const inv = new Investment({ userId: user._id, planId, amount, expireAt });
-  await user.save(); await inv.save();
-  res.json({ message: "Invest Success" });
-});
-
-// --- ৫. অ্যাডমিন কন্ট্রোল ---
-app.get('/api/admin/all-data', auth, adminAuth, async (req, res) => {
-  const users = await User.find({}).select('-password');
-  const requests = await Transaction.find({ status: 'pending' }).populate('userId', 'name email');
-  const investments = await Investment.find().populate('userId', 'name').populate('planId', 'name');
-  res.json({ users, requests, investments });
-});
-
-app.post('/api/admin/handle-request', auth, adminAuth, async (req, res) => {
-  const { requestId, status } = req.body;
-  const trx = await Transaction.findById(requestId);
-  if (status === 'approved' && trx.type === 'deposit') {
-    await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
-  }
-  trx.status = status === 'approved' ? 'completed' : 'rejected';
+  if (user.balance < amount) return res.status(400).json({ message: "Insufficient balance" });
+  user.balance -= amount; // টাকা কেটে রাখা হলো
+  await user.save();
+  const trx = new Transaction({ userId: req.user.id, type: 'withdraw', amount, address, method });
   await trx.save();
-  res.json({ message: "Request Handled" });
+  res.json({ message: "Withdrawal request sent", balance: user.balance });
 });
 
-app.post('/api/admin/update-balance', auth, adminAuth, async (req, res) => {
-  await User.findByIdAndUpdate(req.body.userId, { balance: req.body.balance });
-  res.json({ message: "Balance Updated" });
+// --- ৫. অ্যাডমিন এপিআই রাউটস (আপনার ফ্রন্টএন্ডের সাথে মিল রেখে) ---
+
+// সব পেন্ডিং রিকোয়েস্ট দেখা
+app.get('/api/admin/deposits', auth, adminAuth, async (req, res) => {
+  const requests = await Transaction.find({ status: 'pending' }).populate('userId', 'name email');
+  // ফ্রন্টএন্ডে req.user?.name খোঁজে, তাই userId কে user হিসেবে পাঠানো হচ্ছে
+  const formatted = requests.map(r => ({ ...r._doc, user: r.userId }));
+  res.json(formatted);
 });
 
-app.get("/", (req, res) => res.send("Vinance Server Live"));
+// রিকোয়েস্ট হ্যান্ডেল করা (Approve/Reject)
+app.put('/api/admin/deposit/:id', auth, adminAuth, async (req, res) => {
+  const { status } = req.body;
+  const trx = await Transaction.findById(req.params.id);
+  if (!trx || trx.status !== 'pending') return res.status(404).json({ message: "Request not found" });
+
+  if (status === 'approved') {
+    if (trx.type === 'deposit') {
+      await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
+    }
+    trx.status = 'approved';
+  } else {
+    if (trx.type === 'withdraw') {
+      await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } }); // রিজেক্ট করলে টাকা ফেরত
+    }
+    trx.status = 'rejected';
+  }
+  await trx.save();
+  res.json({ message: "Action Successful" });
+});
+
+// নতুন প্ল্যান তৈরি
+app.post('/api/admin/plans', auth, adminAuth, async (req, res) => {
+  const plan = new Plan(req.body);
+  await plan.save();
+  res.status(201).json({ message: "Plan Created" });
+});
+
+app.get("/", (req, res) => res.send("Server Live"));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server on port ${PORT}`));
-
-module.exports = app;
