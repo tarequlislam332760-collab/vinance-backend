@@ -9,6 +9,7 @@ dotenv.config();
 
 const app = express();
 
+/* ================= CORS ================= */
 app.use(cors({
   origin: ["https://vinance-frontend-vjqa.vercel.app", "http://localhost:5173"],
   credentials: true
@@ -19,19 +20,19 @@ app.use(express.json());
 /* ================= DATABASE ================= */
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected"))
-  .catch(err => console.log(err));
+  .catch(err => console.log("❌ DB Error:", err));
 
 /* ================= MODELS ================= */
 
-const User = mongoose.model("User", new mongoose.Schema({
-  name: String,
-  email: { type: String, unique: true },
-  password: String,
+const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema({
+  name: { type: String, required: true },
+  email: { type: String, unique: true, required: true, lowercase: true, trim: true },
+  password: { type: String, required: true },
   role: { type: String, default: "user" },
   balance: { type: Number, default: 0 }
 }, { timestamps: true }));
 
-const Plan = mongoose.model("Plan", new mongoose.Schema({
+const Plan = mongoose.models.Plan || mongoose.model("Plan", new mongoose.Schema({
   name: String,
   minAmount: Number,
   maxAmount: Number,
@@ -40,14 +41,14 @@ const Plan = mongoose.model("Plan", new mongoose.Schema({
   status: { type: Boolean, default: true }
 }));
 
-const Transaction = mongoose.model("Transaction", new mongoose.Schema({
+const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  type: String, // deposit / withdraw / investment
+  type: String,
   amount: Number,
   status: { type: String, default: "pending" }
 }, { timestamps: true }));
 
-const Investment = mongoose.model("Investment", new mongoose.Schema({
+const Investment = mongoose.models.Investment || mongoose.model("Investment", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   planId: { type: mongoose.Schema.Types.ObjectId, ref: "Plan" },
   amount: Number,
@@ -78,31 +79,52 @@ const adminAuth = (req, res, next) => {
 
 /* ================= AUTH ROUTES ================= */
 
+// ✅ FIXED REGISTER (Error solve)
 app.post("/api/register", async (req, res) => {
-  const { name, email, password } = req.body;
+  try {
+    let { name, email, password } = req.body;
 
-  const hash = await bcrypt.hash(password, 10);
-  await User.create({ name, email, password: hash });
+    if (!name || !email || !password)
+      return res.status(400).json({ message: "All fields required" });
 
-  res.json({ success: true });
+    email = email.toLowerCase().trim();
+
+    const exist = await User.findOne({ email });
+    if (exist)
+      return res.status(400).json({ message: "Email already exists" });
+
+    const hash = await bcrypt.hash(password, 10);
+
+    await User.create({ name, email, password: hash });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.log("Register Error:", err);
+    res.status(500).json({ message: "Registration failed" });
+  }
 });
 
+// ✅ LOGIN
 app.post("/api/login", async (req, res) => {
-  const { email, password } = req.body;
+  try {
+    const { email, password } = req.body;
 
-  const user = await User.findOne({ email });
-  if (!user) return res.status(400).json({ message: "Invalid" });
+    const user = await User.findOne({ email: email.toLowerCase().trim() });
+    if (!user) return res.status(400).json({ message: "Invalid credentials" });
 
-  const match = await bcrypt.compare(password, user.password);
-  if (!match) return res.status(400).json({ message: "Invalid" });
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) return res.status(400).json({ message: "Invalid credentials" });
 
-  const token = jwt.sign(
-    { id: user._id, role: user.role },
-    process.env.JWT_SECRET,
-    { expiresIn: "7d" }
-  );
+    const token = jwt.sign(
+      { id: user._id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
 
-  res.json({ token, user });
+    res.json({ token, user });
+  } catch (err) {
+    res.status(500).json({ message: "Login error" });
+  }
 });
 
 /* ================= USER ================= */
@@ -113,72 +135,89 @@ app.get("/api/plans", async (req, res) => {
 });
 
 app.post("/api/invest", auth, async (req, res) => {
-  const { planId, amount } = req.body;
+  try {
+    const { planId, amount } = req.body;
 
-  const user = await User.findById(req.user.id);
-  const plan = await Plan.findById(planId);
+    const user = await User.findById(req.user.id);
+    const plan = await Plan.findById(planId);
 
-  if (!plan) return res.status(404).json({ message: "Plan not found" });
-  if (user.balance < amount) return res.status(400).json({ message: "No balance" });
+    if (!plan) return res.status(404).json({ message: "Plan not found" });
+    if (amount < plan.minAmount || amount > plan.maxAmount)
+      return res.status(400).json({ message: "Invalid amount" });
 
-  user.balance -= amount;
-  await user.save();
+    if (user.balance < amount)
+      return res.status(400).json({ message: "Insufficient balance" });
 
-  const expireAt = new Date();
-  expireAt.setHours(expireAt.getHours() + plan.duration);
+    user.balance -= amount;
+    await user.save();
 
-  await Investment.create({
-    userId: user._id,
-    planId,
-    amount,
-    expireAt
-  });
+    const expireAt = new Date();
+    expireAt.setHours(expireAt.getHours() + plan.duration);
 
-  await Transaction.create({
-    userId: user._id,
-    type: "investment",
-    amount,
-    status: "approved"
-  });
+    await Investment.create({
+      userId: user._id,
+      planId,
+      amount,
+      expireAt
+    });
 
-  res.json({ success: true });
+    await Transaction.create({
+      userId: user._id,
+      type: "investment",
+      amount,
+      status: "approved"
+    });
+
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ message: "Investment error" });
+  }
 });
 
 /* ================= DEPOSIT ================= */
 
 app.post("/api/deposit", auth, async (req, res) => {
-  const { amount } = req.body;
+  try {
+    const { amount } = req.body;
 
-  const trx = await Transaction.create({
-    userId: req.user.id,
-    type: "deposit",
-    amount,
-    status: "pending"
-  });
+    await Transaction.create({
+      userId: req.user.id,
+      type: "deposit",
+      amount,
+      status: "pending"
+    });
 
-  res.json({ message: "Deposit request sent", trx });
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ message: "Deposit error" });
+  }
 });
 
 /* ================= WITHDRAW ================= */
 
 app.post("/api/withdraw", auth, async (req, res) => {
-  const { amount } = req.body;
+  try {
+    const { amount } = req.body;
 
-  const user = await User.findById(req.user.id);
+    const user = await User.findById(req.user.id);
 
-  if (user.balance < amount) return res.status(400).json({ message: "Low balance" });
+    if (user.balance < amount)
+      return res.status(400).json({ message: "Low balance" });
 
-  user.balance -= amount;
-  await user.save();
+    user.balance -= amount;
+    await user.save();
 
-  await Transaction.create({
-    userId: user._id,
-    type: "withdraw",
-    amount,
-    status: "pending"
-  });
+    await Transaction.create({
+      userId: user._id,
+      type: "withdraw",
+      amount,
+      status: "pending"
+    });
 
-  res.json({ success: true });
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ message: "Withdraw error" });
+  }
 });
 
 /* ================= ADMIN ================= */
@@ -250,4 +289,4 @@ app.get("/", (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log("Server running:", PORT));
+app.listen(PORT, () => console.log("🚀 Server running:", PORT));
