@@ -8,7 +8,7 @@ const jwt = require('jsonwebtoken');
 
 const app = express();
 
-// --- ১. মিডলওয়্যার (Vercel ও Local হোস্টের জন্য CORS কনফিগারেশন) ---
+// --- ১. মিডলওয়্যার ---
 app.use(cors({
   origin: ["https://vinance-frontend-vjqa.vercel.app", "http://localhost:5173"], 
   credentials: true,
@@ -23,7 +23,7 @@ mongoose.connect(MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected!"))
   .catch(err => console.error("❌ DB Error:", err.message));
 
-// --- ৩. মডেলস ---
+// --- ৩. মডেলস (Schemas) ---
 const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, unique: true, required: true },
@@ -38,7 +38,7 @@ const Transaction = mongoose.models.Transaction || mongoose.model('Transaction',
   amount: { type: Number, required: true },
   method: { type: String, default: 'System' },
   transactionId: { type: String },
-  address: { type: String }, // উইথড্রর জন্য ওয়ালেট অ্যাড্রেস
+  address: { type: String }, 
   status: { type: String, default: 'pending' },
   createdAt: { type: Date, default: Date.now }
 }));
@@ -100,53 +100,56 @@ app.post('/api/login', async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Login failed" }); }
 });
 
-// --- ৬. ইউজার অ্যাকশন (Deposit, Withdraw, Invest) ---
+// --- ৬. ইউজার প্যানেল ফাংশনালিটি ---
 
-// ডিপোজিট
+// ইউজারের নিজস্ব ইনভেস্টমেন্ট লগ (My Investment Logs)
+app.get('/api/my-investments', auth, async (req, res) => {
+  try {
+    const logs = await Investment.find({ userId: req.user.id }).populate('planId').sort({ createdAt: -1 });
+    res.json(logs);
+  } catch (err) { res.status(500).json({ message: "Failed to fetch logs" }); }
+});
+
+// ইউজারের নিজস্ব ট্রানজেকশন হিস্ট্রি
+app.get('/api/my-transactions', auth, async (req, res) => {
+  try {
+    const logs = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
+    res.json(logs);
+  } catch (err) { res.status(500).json({ message: "Failed to fetch history" }); }
+});
+
 app.post('/api/deposit', auth, async (req, res) => {
   try {
     const { amount, method, transactionId } = req.body;
-    const trx = new Transaction({
-      userId: req.user.id, type: 'deposit', amount: Number(amount), method, transactionId
-    });
+    const trx = new Transaction({ userId: req.user.id, type: 'deposit', amount: Number(amount), method, transactionId });
     await trx.save();
     res.json({ message: "Deposit request submitted." });
   } catch (err) { res.status(500).json({ message: "Deposit failed" }); }
 });
 
-// উইথড্র (এটি আপনার "Withdrawal Failed" এরর বন্ধ করবে)
 app.post('/api/withdraw', auth, async (req, res) => {
   try {
     const { amount, method, address } = req.body;
     const user = await User.findById(req.user.id);
     if (user.balance < Number(amount)) return res.status(400).json({ message: "Insufficient Balance" });
-
-    // উইথড্র করলে সাথে সাথে ব্যালেন্স থেকে কাটা হবে (পরে রিজেক্ট হলে ফেরত আসবে)
     user.balance -= Number(amount);
     await user.save();
-
-    const trx = new Transaction({
-      userId: req.user.id, type: 'withdraw', amount: Number(amount), method, address, status: 'pending'
-    });
+    const trx = new Transaction({ userId: req.user.id, type: 'withdraw', amount: Number(amount), method, address });
     await trx.save();
-    res.json({ message: "Withdraw request pending approval", balance: user.balance });
+    res.json({ message: "Withdraw request pending", balance: user.balance });
   } catch (err) { res.status(500).json({ message: "Withdrawal failed" }); }
 });
 
-// ইনভেস্টমেন্ট/ট্রেড (এটি আপনার "Trade Failed" এরর বন্ধ করবে)
 app.post('/api/invest', auth, async (req, res) => {
   try {
     const { planId, amount } = req.body;
     const user = await User.findById(req.user.id);
     const plan = await Plan.findById(planId);
     if (!plan) return res.status(404).json({ message: "Plan not found" });
-
     const investAmt = Number(amount);
     if (user.balance < investAmt) return res.status(400).json({ message: "Insufficient Balance" });
-    
     user.balance -= investAmt;
     await user.save();
-
     const invest = new Investment({
       userId: user._id, planId: plan._id, amount: investAmt,
       profit: (investAmt * plan.profitPercent) / 100,
@@ -162,58 +165,68 @@ app.get('/api/plans', async (req, res) => {
   res.json(plans);
 });
 
-// --- ৭. অ্যাডমিন প্যানেল API ---
+// --- ৭. অ্যাডমিন প্যানেল API (Manage All Users, Requests) ---
 
-// অ্যাডমিন ড্যাশবোর্ড ডাটা (একসাথে সব ইউজার, রিকোয়েস্ট দেখার জন্য)
-app.get('/api/admin/all-data', auth, adminAuth, async (req, res) => {
+// সব ইউজার ম্যানেজ করা (Manage All Users)
+app.get('/api/admin/users', auth, adminAuth, async (req, res) => {
   try {
-    const users = await User.find().select('-password');
-    const requests = await Transaction.find().populate('userId', 'name email').sort({createdAt: -1});
-    const investments = await Investment.find().populate('userId', 'name email').populate('planId');
-    res.json({ users, requests, investments });
+    const users = await User.find().select('-password').sort({ createdAt: -1 });
+    res.json(users);
+  } catch (err) { res.status(500).json({ message: "Fetch users failed" }); }
+});
+
+// ইউজারের ডিটেইলস এবং ব্যালেন্স এডিট (User Details)
+app.put('/api/admin/user/:id', auth, adminAuth, async (req, res) => {
+  try {
+    const { balance, role } = req.body;
+    await User.findByIdAndUpdate(req.params.id, { balance, role });
+    res.json({ message: "User updated successfully" });
+  } catch (err) { res.status(500).json({ message: "Update failed" }); }
+});
+
+// ট্রানজেকশন রিকোয়েস্ট লিস্ট (Transaction Requests)
+app.get('/api/admin/transactions', auth, adminAuth, async (req, res) => {
+  try {
+    const trxs = await Transaction.find().populate('userId', 'name email').sort({ createdAt: -1 });
+    res.json(trxs);
   } catch (err) { res.status(500).json({ message: "Fetch failed" }); }
 });
 
-// রিকোয়েস্ট হ্যান্ডেল করা (Approve/Reject) - এটি "Action Failed" ফিক্স করবে
 app.post('/api/admin/handle-request', auth, adminAuth, async (req, res) => {
   try {
     const { requestId, status } = req.body; 
     const trx = await Transaction.findById(requestId);
-    if (!trx || trx.status !== 'pending') return res.status(400).json({ message: "Request already processed" });
-
-    if (status === 'approved') {
-      if (trx.type === 'deposit') {
-        // ডিপোজিট অ্যাপ্রুভ করলে ব্যালেন্স বাড়বে
+    if (!trx || trx.status !== 'pending') return res.status(400).json({ message: "Already processed" });
+    if (status === 'approved' && trx.type === 'deposit') {
         await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
-      }
-      // উইথড্রর ক্ষেত্রে ব্যালেন্স আগেই কাটা হয়েছে
-    } else if (status === 'rejected') {
-      if (trx.type === 'withdraw') {
-        // উইথড্র রিজেক্ট করলে কাটা ব্যালেন্স ফেরত দিতে হবে
+    } else if (status === 'rejected' && trx.type === 'withdraw') {
         await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
-      }
     }
-    
     trx.status = status;
     await trx.save();
-    res.json({ message: `Request ${status} successfully` });
+    res.json({ message: `Request ${status}` });
   } catch (err) { res.status(500).json({ message: "Action failed" }); }
 });
 
-// নতুন প্ল্যান তৈরি
 app.post('/api/admin/plans', auth, adminAuth, async (req, res) => {
   try {
-    const { name, minAmount, maxAmount, profitPercent, duration } = req.body;
-    const newPlan = new Plan({
-      name, minAmount: Number(minAmount), maxAmount: Number(maxAmount),
-      profitPercent: Number(profitPercent), duration: Number(duration)
-    });
+    const newPlan = new Plan(req.body);
     await newPlan.save();
-    res.status(201).json({ message: "New Investment Plan Created" });
-  } catch (err) { res.status(500).json({ message: "Plan creation failed" }); }
+    res.status(201).json({ message: "Plan Created" });
+  } catch (err) { res.status(500).json({ message: "Failed" }); }
 });
 
-app.get("/", (req, res) => res.send("Vinance Pro Backend Running..."));
+// ড্যাশবোর্ডের জন্য অল ডাটা সামারি
+app.get('/api/admin/all-data', auth, adminAuth, async (req, res) => {
+  try {
+    const usersCount = await User.countDocuments();
+    const totalInvest = await Investment.aggregate([{ $group: { _id: null, total: { $sum: "$amount" } } }]);
+    const pendingDeps = await Transaction.find({ status: 'pending', type: 'deposit' }).populate('userId', 'name email');
+    res.json({ usersCount, totalInvest: totalInvest[0]?.total || 0, pendingDeps });
+  } catch (err) { res.status(500).json({ message: "Fetch failed" }); }
+});
+
+app.get("/", (req, res) => res.send("Vinance Pro Backend Live"));
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server started on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Server on port ${PORT}`));
