@@ -74,23 +74,34 @@ const adminAuth = (req, res, next) => {
 };
 
 // --- ৫. রুটস (পাবলিক ও ইউজার) ---
+
+// রেজিস্ট্রেশন রুট (রেসপন্স আরও ক্লিয়ার করা হয়েছে)
 app.post('/api/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
-    const userExists = await User.findOne({ email: email.toLowerCase() });
+    if (!name || !email || !password) return res.status(400).json({ message: "All fields are required" });
+
+    const normalizedEmail = email.toLowerCase().trim();
+    const userExists = await User.findOne({ email: normalizedEmail });
     if (userExists) return res.status(400).json({ message: "Email already exists" });
+
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({ name, email: email.toLowerCase(), password: hashedPassword });
+    const user = new User({ name, email: normalizedEmail, password: hashedPassword });
     await user.save();
+    
     res.status(201).json({ message: "Success" });
-  } catch (err) { res.status(500).json({ message: "Failed" }); }
+  } catch (err) { 
+    console.error("Register Error:", err);
+    res.status(500).json({ message: "Internal Server Error", error: err.message }); 
+  }
 });
 
 app.post('/api/login', async (req, res) => {
   try {
-    const user = await User.findOne({ email: req.body.email.toLowerCase() });
+    const user = await User.findOne({ email: req.body.email.toLowerCase().trim() });
     if (!user || !(await bcrypt.compare(req.body.password, user.password))) 
       return res.status(400).json({ message: "Invalid Credentials" });
+
     const secret = (process.env.JWT_SECRET || 'secret_123').trim();
     const token = jwt.sign({ id: user._id, role: user.role }, secret, { expiresIn: '7d' });
     res.json({ token, user: { id: user._id, name: user.name, balance: user.balance, role: user.role } });
