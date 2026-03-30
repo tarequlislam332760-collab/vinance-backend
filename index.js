@@ -22,7 +22,7 @@ mongoose.connect(MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected!"))
   .catch(err => console.error("❌ DB Error:", err.message));
 
-// --- ৩. মডেলস ---
+// --- ৩. মডেলস (Schemas) ---
 const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, unique: true, required: true },
@@ -57,7 +57,7 @@ const Transaction = mongoose.models.Transaction || mongoose.model('Transaction',
   status: { type: String, default: 'pending' }
 }, { timestamps: true }));
 
-// --- ৪. মিডলওয়্যার (Auth) ---
+// --- ৪. মিডলওয়্যার (Authentication) ---
 const auth = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ message: "Login required" });
@@ -74,21 +74,22 @@ const adminAuth = (req, res, next) => {
 };
 
 // --- ৫. পাবলিক ও ইউজার রুটস ---
+
 app.post('/api/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
-    const userExists = await User.findOne({ email: email.toLowerCase() });
+    const userExists = await User.findOne({ email: email.toLowerCase().trim() });
     if (userExists) return res.status(400).json({ message: "Email already exists" });
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({ name, email: email.toLowerCase(), password: hashedPassword });
+    const user = new User({ name, email: email.toLowerCase().trim(), password: hashedPassword });
     await user.save();
     res.status(201).json({ message: "Success" });
-  } catch (err) { res.status(500).json({ message: "Failed" }); }
+  } catch (err) { res.status(500).json({ message: "Registration failed" }); }
 });
 
 app.post('/api/login', async (req, res) => {
   try {
-    const user = await User.findOne({ email: req.body.email.toLowerCase() });
+    const user = await User.findOne({ email: req.body.email.toLowerCase().trim() });
     if (!user || !(await bcrypt.compare(req.body.password, user.password))) 
       return res.status(400).json({ message: "Invalid Credentials" });
     const secret = (process.env.JWT_SECRET || 'secret_123').trim();
@@ -97,7 +98,26 @@ app.post('/api/login', async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Login error" }); }
 });
 
-// --- ৬. অ্যাডমিন রুটস (ব্যালেন্স আপডেট সহ) ---
+// প্রোফাইল ও ট্রানজ্যাকশন রুট (FIXED 404 error)
+app.get('/api/profile', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select('-password');
+    const transactions = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
+    res.json({ ...user._doc, transactions });
+  } catch (err) { res.status(500).json({ message: "Error fetching profile" }); }
+});
+
+// ইনভেস্টমেন্ট প্ল্যান লিস্ট রুট
+app.get('/api/plans', async (req, res) => {
+  try {
+    const plans = await Plan.find({ status: true });
+    res.json(plans);
+  } catch (err) { res.status(500).json({ message: "Error fetching plans" }); }
+});
+
+// --- ৬. অ্যাডমিন রুটস ---
+
+// অ্যাডমিন ড্যাশবোর্ড ডাটা (Users, Requests, Logs)
 app.get('/api/admin/all-data', auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select('-password');
@@ -107,28 +127,36 @@ app.get('/api/admin/all-data', auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Fetch failed" }); }
 });
 
+// ইউজার ব্যালেন্স সরাসরি আপডেট করার রুট
 app.post('/api/admin/update-balance', auth, adminAuth, async (req, res) => {
   try {
     const { userId, balance } = req.body;
-    await User.findByIdAndUpdate(userId, { balance: Number(balance) });
-    res.json({ message: "Balance Updated Successfully" });
+    const updatedUser = await User.findByIdAndUpdate(userId, { balance: Number(balance) }, { new: true });
+    if (!updatedUser) return res.status(404).json({ message: "User not found" });
+    res.json({ message: "Balance Updated Successfully", user: updatedUser });
   } catch (err) { res.status(500).json({ message: "Update failed" }); }
 });
 
+// ডিপোজিট/উইথড্র রিকোয়েস্ট হ্যান্ডেল করার রুট
 app.post('/api/admin/handle-request', auth, adminAuth, async (req, res) => {
   try {
     const { requestId, status } = req.body;
     const trx = await Transaction.findById(requestId);
+    if (!trx) return res.status(404).json({ message: "Transaction not found" });
+
     if (status === 'approved' && trx.status === 'pending') {
-      if (trx.type === 'deposit') await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
+      if (trx.type === 'deposit') {
+        await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
+      }
     }
     trx.status = status;
     await trx.save();
-    res.json({ message: "Request processed" });
+    res.json({ message: "Request processed successfully" });
   } catch (err) { res.status(500).json({ message: "Action failed" }); }
 });
 
 app.get("/", (req, res) => res.send("Vinance Pro API Operational"));
 
+// --- ৭. সার্ভার স্টার্ট ---
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
