@@ -7,7 +7,7 @@ require('dotenv').config();
 
 const app = express();
 
-// --- ১. মিডলওয়্যার (CORS Fixed for Vercel) ---
+// --- ১. মিডলওয়্যার (CORS & JSON) ---
 app.use(cors({
   origin: ["https://vinance-frontend-vjqa.vercel.app", "http://localhost:5173"], 
   credentials: true,
@@ -16,11 +16,9 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// --- ২. ডাটাবেজ কানেকশন (Vercel Optimization) ---
+// --- ২. ডাটাবেজ কানেকশন ---
 const MONGO_URI = process.env.MONGO_URI;
-mongoose.connect(MONGO_URI, {
-  serverSelectionTimeoutMS: 5000 
-})
+mongoose.connect(MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected!"))
   .catch(err => console.error("❌ DB Error:", err.message));
 
@@ -59,7 +57,7 @@ const Transaction = mongoose.models.Transaction || mongoose.model('Transaction',
   status: { type: String, default: 'pending' }
 }, { timestamps: true }));
 
-// --- ৪. মিডলওয়্যার (Auth) ---
+// --- ৪. মিডলওয়্যার (Auth & Admin) ---
 const auth = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ message: "Login required" });
@@ -75,35 +73,66 @@ const adminAuth = (req, res, next) => {
   else res.status(403).json({ message: "Admin access only" });
 };
 
-// --- ৫. এপিআই রুটস ---
+// --- ৫. ইউজার এপিআই রুটস (Auth, Profile, Invest) ---
 
+// রেজিস্ট্রেশন রুট
+app.post('/api/register', async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+    const userExists = await User.findOne({ email: email.toLowerCase().trim() });
+    if (userExists) return res.status(400).json({ message: "Email already exists" });
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = new User({ name, email: email.toLowerCase().trim(), password: hashedPassword });
+    await user.save();
+    res.status(201).json({ message: "Registration successful!" });
+  } catch (err) { res.status(500).json({ message: "Registration failed" }); }
+});
+
+// লগইন রুট
 app.post('/api/login', async (req, res) => {
   try {
-    const user = await User.findOne({ email: req.body.email.toLowerCase().trim() });
-    if (!user || !(await bcrypt.compare(req.body.password, user.password))) {
-      return res.status(400).json({ message: "Wrong email or password" });
-    }
+    const { email, password } = req.body;
+    const user = await User.findOne({ email: email.toLowerCase().trim() });
+    if (!user) return res.status(400).json({ message: "User not found" });
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(400).json({ message: "Invalid password" });
+
     const secret = (process.env.JWT_SECRET || 'secret_123').trim();
     const token = jwt.sign({ id: user._id, role: user.role }, secret, { expiresIn: '7d' });
     res.json({ token, user: { id: user._id, name: user.name, balance: user.balance, role: user.role } });
-  } catch (err) { res.status(500).json({ message: "Server error" }); }
+  } catch (err) { res.status(500).json({ message: "Login failed" }); }
+});
+
+app.get('/api/profile', auth, async (req, res) => {
+  const user = await User.findById(req.user.id).select('-password');
+  res.json(user);
 });
 
 app.get('/api/plans', async (req, res) => {
-  try {
-    const plans = await Plan.find({ status: true });
-    res.json(plans);
-  } catch (err) { res.status(500).json({ message: "Could not load plans" }); }
+  const plans = await Plan.find({ status: true });
+  res.json(plans);
 });
 
-// ডিপোজিট রিকোয়েস্ট (ইউজার করবে)
-app.post('/api/deposit', auth, async (req, res) => {
+app.post('/api/invest', auth, async (req, res) => {
   try {
-    const { amount, method } = req.body;
-    const trx = new Transaction({ userId: req.user.id, type: 'deposit', amount, method });
-    await trx.save();
-    res.json({ message: "Deposit request sent!" });
-  } catch (err) { res.status(500).json({ message: "Failed to send request" }); }
+    const { planId, amount } = req.body;
+    const user = await User.findById(req.user.id);
+    const plan = await Plan.findById(planId);
+    if (user.balance < amount) return res.status(400).json({ message: "Insufficient Balance" });
+    
+    user.balance -= amount;
+    await user.save();
+    
+    const invest = new Investment({ 
+      userId: user._id, planId: plan._id, amount, 
+      profit: (amount * plan.profitPercent) / 100,
+      expireAt: new Date(Date.now() + plan.duration * 60 * 60 * 1000)
+    });
+    await invest.save();
+    res.json({ message: "Investment successful", balance: user.balance });
+  } catch (err) { res.status(500).json({ message: "Investment failed" }); }
 });
 
 // --- ৬. অ্যাডমিন এপিআই রুটস (Command Center) ---
@@ -113,31 +142,29 @@ app.get('/api/admin/all-data', auth, adminAuth, async (req, res) => {
     const users = await User.find().select('-password');
     const requests = await Transaction.find().populate('userId', 'name email').sort({ createdAt: -1 });
     const investments = await Investment.find().populate('userId', 'name email').populate('planId').sort({ createdAt: -1 });
-    
-    console.log("✅ Admin Data Sent!"); // টার্মিনালে চেক করার জন্য
     res.json({ users, requests, investments });
-  } catch (err) { 
-    console.error("❌ Admin Fetch Error:", err);
-    res.status(500).json({ message: "Error loading data" }); 
-  }
+  } catch (err) { res.status(500).json({ message: "Fetch failed" }); }
 });
 
-// রিকোয়েস্ট হ্যান্ডেল (Approve/Reject)
+app.post('/api/admin/plans', auth, adminAuth, async (req, res) => {
+  try {
+    const plan = new Plan(req.body);
+    await plan.save();
+    res.status(201).json({ message: "Plan Created!" });
+  } catch (err) { res.status(500).json({ message: "Failed to create plan" }); }
+});
+
 app.post('/api/admin/handle-request', auth, adminAuth, async (req, res) => {
   try {
     const { requestId, status } = req.body;
     const trx = await Transaction.findById(requestId);
-    if (!trx) return res.status(404).json({ message: "Request not found" });
-
     if (status === 'approved' && trx.status === 'pending') {
-      if (trx.type === 'deposit') {
-        await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
-      }
+      if (trx.type === 'deposit') await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
     }
     trx.status = status;
     await trx.save();
-    res.json({ message: `Request ${status} successfully` });
-  } catch (err) { res.status(500).json({ message: "Action failed" }); }
+    res.json({ message: "Request processed" });
+  } catch (err) { res.status(500).json({ message: "Processing failed" }); }
 });
 
 app.get("/", (req, res) => res.send("Vinance Pro API Operational"));
