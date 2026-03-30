@@ -7,7 +7,7 @@ require('dotenv').config();
 
 const app = express();
 
-// ১. মিডলওয়্যার (CORS configuration is key)
+// ১. CORS কনফিগারেশন
 app.use(cors({
   origin: ["https://vinance-frontend-vjqa.vercel.app", "http://localhost:5173"], 
   credentials: true,
@@ -25,15 +25,11 @@ mongoose.connect(MONGO_URI)
   .catch(err => console.error("❌ DB Error:", err.message));
 
 // ৩. মডেলস (Models)
-const UserSchema = new mongoose.Schema({
-  name: String, 
-  email: { type: String, unique: true, required: true }, 
-  password: { type: String, required: true }, 
-  balance: { type: Number, default: 0 }, 
+const User = mongoose.models.User || mongoose.model('User', new mongoose.Schema({
+  name: String, email: { type: String, unique: true, required: true }, 
+  password: { type: String, required: true }, balance: { type: Number, default: 0 }, 
   role: { type: String, default: 'user' }
-}, { timestamps: true });
-
-const User = mongoose.models.User || mongoose.model('User', UserSchema);
+}, { timestamps: true }));
 
 const Plan = mongoose.models.Plan || mongoose.model('Plan', new mongoose.Schema({
   name: String, minAmount: Number, maxAmount: Number, profitPercent: Number, duration: Number, status: { type: Boolean, default: true }
@@ -50,18 +46,15 @@ const Investment = mongoose.models.Investment || mongoose.model('Investment', ne
   amount: Number, status: { type: String, default: 'active' }
 }, { timestamps: true }));
 
-// ৪. অথেন্টিকেশন মিডলওয়্যার (Auth Middleware)
+// ৪. মিডলওয়্যার (Auth & Admin)
 const auth = (req, res, next) => {
   try {
     const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ message: "No Token, Authorization Denied" });
-    
+    if (!token) return res.status(401).json({ message: "No Token" });
     const decoded = jwt.verify(token, JWT_SECRET);
     req.user = decoded;
     next();
-  } catch (err) {
-    res.status(401).json({ message: "Token is not valid" });
-  }
+  } catch (err) { res.status(401).json({ message: "Invalid Token" }); }
 };
 
 const adminAuth = (req, res, next) => {
@@ -69,48 +62,28 @@ const adminAuth = (req, res, next) => {
   else res.status(403).json({ message: "Access Denied: Admins only" });
 };
 
-// ৫. রুটস (Auth Routes)
+// ৫. অথেন্টিকেশন রুটস
 app.post('/api/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
-    if (!name || !email || !password) return res.status(400).json({ message: "Please enter all fields" });
-
-    const normalizedEmail = email.toLowerCase().trim();
-    const existingUser = await User.findOne({ email: normalizedEmail });
-    if (existingUser) return res.status(400).json({ message: "User already exists" });
-
     const hash = await bcrypt.hash(password, 10);
-    const user = new User({ name, email: normalizedEmail, password: hash });
+    const user = new User({ name, email: email.toLowerCase().trim(), password: hash });
     await user.save();
-    
-    res.status(201).json({ success: true, message: "User registered successfully" });
-  } catch (err) {
-    res.status(500).json({ message: "Server error during registration" });
-  }
+    res.status(201).json({ success: true });
+  } catch (err) { res.status(500).json({ message: "Fail" }); }
 });
 
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     const user = await User.findOne({ email: email.toLowerCase().trim() });
-    
-    if (!user) return res.status(400).json({ message: "User does not exist" });
-
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ message: "Invalid credentials" });
-
+    if (!user || !(await bcrypt.compare(password, user.password))) return res.status(400).json({ message: "Wrong credentials" });
     const token = jwt.sign({ id: user._id, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
-    
-    res.json({ 
-      token, 
-      user: { id: user._id, name: user.name, email: user.email, role: user.role, balance: user.balance } 
-    });
-  } catch (err) {
-    res.status(500).json({ message: "Server error during login" });
-  }
+    res.json({ token, user: { id: user._id, name: user.name, role: user.role, balance: user.balance } });
+  } catch (err) { res.status(500).json({ message: "Login failed" }); }
 });
 
-// ৬. ইনভেস্টমেন্ট ও অন্যান্য রুটস
+// ৬. ইউজার সার্ভিস রুটস
 app.get('/api/plans', async (req, res) => {
   const plans = await Plan.find({ status: true });
   res.json(plans);
@@ -120,48 +93,72 @@ app.post('/api/invest', auth, async (req, res) => {
   try {
     const { planId, amount } = req.body;
     const user = await User.findById(req.user.id);
-    const plan = await Plan.findById(planId);
-
-    if (amount < plan.minAmount || amount > plan.maxAmount) return res.status(400).send("Invalid Amount");
     if (user.balance < amount) return res.status(400).send("Insufficient Balance");
-
     user.balance -= amount;
     await user.save();
-
     await new Investment({ userId: user._id, planId, amount }).save();
     await new Transaction({ userId: user._id, type: 'investment', amount, status: 'approved' }).save();
-
     res.json({ success: true, balance: user.balance });
-  } catch (err) { res.status(500).send("Investment failed"); }
+  } catch (err) { res.status(500).send("Error"); }
 });
 
-// ৭. অ্যাডমিন রুটস
+// --- ৭. অ্যাডমিন রুটস (এই অংশটিই আপনার এরর ঠিক করবে) ---
+
+// ইউজারের সব ডাটা এবং লগস লোড করা
 app.get('/api/admin/all-data', auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select('-password');
     const requests = await Transaction.find().populate('userId', 'name email').sort({createdAt: -1});
     const investments = await Investment.find().populate('userId', 'name email').populate('planId').sort({createdAt: -1});
     res.json({ users, requests, investments });
-  } catch (err) { res.status(500).json({ message: "Error fetching admin data" }); }
+  } catch (err) { res.status(500).json({ message: "Admin data fetch error" }); }
 });
 
+// ইউজারের ব্যালেন্স আপডেট
+app.post('/api/admin/update-balance', auth, adminAuth, async (req, res) => {
+  try {
+    const { userId, balance } = req.body;
+    // ব্যালেন্সকে সংখ্যায় (Number) কনভার্ট করে সেভ করা হচ্ছে
+    await User.findByIdAndUpdate(userId, { balance: Number(balance) });
+    res.json({ success: true, message: "Balance updated" });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
+// নতুন প্ল্যান তৈরি করা (আপনার ManagePlans.jsx এর জন্য)
+app.post('/api/admin/create-plan', auth, adminAuth, async (req, res) => {
+  try {
+    const { name, minAmount, maxAmount, profitPercent, duration } = req.body;
+    const newPlan = new Plan({
+      name,
+      minAmount: Number(minAmount),
+      maxAmount: Number(maxAmount),
+      profitPercent: Number(profitPercent),
+      duration: Number(duration)
+    });
+    await newPlan.save();
+    res.status(201).json({ success: true, message: "Plan created" });
+  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
+});
+
+// রিকোয়েস্ট হ্যান্ডেল (Approve/Reject)
 app.post('/api/admin/handle-request', auth, adminAuth, async (req, res) => {
-  const { requestId, status } = req.body;
-  const trx = await Transaction.findById(requestId);
-  
-  if (status === 'approved' && trx.status === 'pending') {
-    if (trx.type === 'deposit') {
+  try {
+    const { requestId, status } = req.body;
+    const trx = await Transaction.findById(requestId);
+    if (status === 'approved' && trx.status === 'pending') {
+      if (trx.type === 'deposit') {
+        await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
+      }
+    } else if (status === 'rejected' && trx.type === 'withdraw') {
       await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
     }
-  } else if (status === 'rejected' && trx.type === 'withdraw') {
-    await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
-  }
-  trx.status = status;
-  await trx.save();
-  res.json({ message: "Request Processed" });
+    trx.status = status;
+    await trx.save();
+    res.json({ message: "Success" });
+  } catch (err) { res.status(500).json({ message: "Failed" }); }
 });
 
-app.get("/", (req, res) => res.send("Vinance Pro API Running"));
+app.get("/", (req, res) => res.send("Vinance Pro API Operational"));
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Server on port: ${PORT}`));
