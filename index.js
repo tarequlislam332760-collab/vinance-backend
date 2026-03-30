@@ -75,7 +75,6 @@ const adminAuth = (req, res, next) => {
 
 // --- ৫. রুটস (পাবলিক ও ইউজার) ---
 
-// রেজিস্ট্রেশন রুট (রেসপন্স আরও ক্লিয়ার করা হয়েছে)
 app.post('/api/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -89,10 +88,11 @@ app.post('/api/register', async (req, res) => {
     const user = new User({ name, email: normalizedEmail, password: hashedPassword });
     await user.save();
     
-    res.status(201).json({ message: "Success" });
+    // ✅ এখানে success: true যোগ করা হয়েছে যাতে ফ্রন্টএন্ড সহজে বুঝতে পারে
+    res.status(201).json({ success: true, message: "Registration Successful" });
   } catch (err) { 
     console.error("Register Error:", err);
-    res.status(500).json({ message: "Internal Server Error", error: err.message }); 
+    res.status(500).json({ success: false, message: "Internal Server Error" }); 
   }
 });
 
