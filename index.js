@@ -20,11 +20,7 @@ mongoose.connect(process.env.MONGO_URI).then(() => console.log("✅ DB Connected
 
 /* ================= MODELS ================= */
 const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema({
-  name: String, 
-  email: { type: String, unique: true }, 
-  password: String, 
-  role: { type: String, default: "user" }, 
-  balance: { type: Number, default: 0 }
+  name: String, email: { type: String, unique: true }, password: String, role: { type: String, default: "user" }, balance: { type: Number, default: 0 }
 }));
 
 const Plan = mongoose.models.Plan || mongoose.model("Plan", new mongoose.Schema({
@@ -34,17 +30,13 @@ const Plan = mongoose.models.Plan || mongoose.model("Plan", new mongoose.Schema(
 const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   type: { type: String, enum: ["deposit", "withdraw", "investment", "sell"] },
-  amount: Number, 
-  method: String, 
-  transactionId: String, 
-  status: { type: String, default: "pending" }
+  amount: Number, method: String, transactionId: String, status: { type: String, default: "pending" }
 }, { timestamps: true }));
 
 const Investment = mongoose.models.Investment || mongoose.model("Investment", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   planId: { type: mongoose.Schema.Types.ObjectId, ref: "Plan" },
-  amount: Number, 
-  status: { type: String, default: "active" }
+  amount: Number, status: { type: String, default: "active" }
 }, { timestamps: true }));
 
 /* ================= AUTH MIDDLEWARE ================= */
@@ -65,7 +57,7 @@ const adminAuth = (req, res, next) => {
 
 /* ================= ROUTES ================= */
 
-// 1. Auth Routes
+// --- ১. অথেন্টিকেশন (Register & Login) ---
 app.post("/api/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -80,7 +72,7 @@ app.post("/api/login", async (req, res) => {
   const user = await User.findOne({ email: email.toLowerCase() });
   if (!user || !bcrypt.compareSync(password, user.password)) return res.status(400).json({ message: "Wrong Info" });
   const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
-  res.json({ token, user });
+  res.json({ token, user: { id: user._id, name: user.name, role: user.role, balance: user.balance } });
 });
 
 app.get("/api/profile", auth, async (req, res) => {
@@ -88,7 +80,26 @@ app.get("/api/profile", auth, async (req, res) => {
   res.json(user);
 });
 
-// 2. Investment & Trading
+// --- ২. ইউজার অ্যাকশন (Deposit, Withdraw, Trade) ---
+
+app.post("/api/deposit", auth, async (req, res) => {
+  try {
+    const { amount, method, transactionId } = req.body;
+    await Transaction.create({ userId: req.user.id, type: "deposit", amount: Number(amount), method, transactionId });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ message: "Deposit error" }); }
+});
+
+app.post("/api/withdraw", auth, async (req, res) => {
+  try {
+    const { amount, method, transactionId } = req.body;
+    const user = await User.findById(req.user.id);
+    if (user.balance < Number(amount)) return res.status(400).json({ message: "Low Balance" });
+    await Transaction.create({ userId: req.user.id, type: "withdraw", amount: Number(amount), method, transactionId });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ message: "Withdraw error" }); }
+});
+
 app.post("/api/invest", auth, async (req, res) => {
   try {
     const { planId, amount } = req.body;
@@ -108,7 +119,13 @@ app.get("/api/my-investments", auth, async (req, res) => {
   res.json(data);
 });
 
-// 3. Admin Panel Routes (স্ক্রিনশটের সমস্যাগুলো এখানে সমাধান করা হয়েছে)
+app.get("/api/my-transactions", auth, async (req, res) => {
+  const data = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
+  res.json(data);
+});
+
+// --- ৩. অ্যাডমিন অ্যাকশন (All Logs & Control) ---
+
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select("-password");
@@ -118,7 +135,14 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error fetching data" }); }
 });
 
-// এডমিন কর্তৃক ট্রানজাকশন অ্যাপ্রুভ (Approve/Reject Fix)
+app.post("/api/admin/create-plan", auth, adminAuth, async (req, res) => {
+  try {
+    const { name, minAmount, maxAmount, profitPercent, duration } = req.body;
+    await Plan.create({ name, minAmount, maxAmount, profitPercent, duration });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ message: "Plan create failed" }); }
+});
+
 app.post("/api/admin/update-status", auth, adminAuth, async (req, res) => {
   try {
     const { id, status } = req.body;
@@ -128,7 +152,6 @@ app.post("/api/admin/update-status", auth, adminAuth, async (req, res) => {
     transaction.status = status;
     await transaction.save();
 
-    // যদি ডিপোজিট অ্যাপ্রুভ হয়, ইউজারের ব্যালেন্স বাড়িয়ে দাও
     if (status === "approved" && transaction.type === "deposit") {
         await User.findByIdAndUpdate(transaction.userId, { $inc: { balance: transaction.amount } });
     }
@@ -136,13 +159,16 @@ app.post("/api/admin/update-status", auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Update failed" }); }
 });
 
-// এডমিন কর্তৃক ব্যালেন্স আপডেট (Update Balance Fix)
 app.post("/api/admin/update-balance", auth, adminAuth, async (req, res) => {
   try {
     const { userId, balance } = req.body;
     await User.findByIdAndUpdate(userId, { balance: Number(balance) });
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ message: "Update failed" }); }
+  } catch (err) { res.status(500).json({ message: "Balance update failed" }); }
+});
+
+app.get("/api/plans", async (req, res) => {
+  res.json(await Plan.find({ status: true }));
 });
 
 app.get("/", (req, res) => res.send("🔥 Vinance API Live!"));
