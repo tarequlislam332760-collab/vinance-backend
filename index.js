@@ -19,8 +19,13 @@ app.use(cors({
 
 app.use(express.json());
 
-// এরর ফিক্স: '*' এর বদলে '(.*)' ব্যবহার করা হয়েছে যা Vercel-এ ক্র্যাশ করবে না
-app.options('(.*)', cors());
+// এরর ফিক্স: ব্রাউজারের OPTIONS রিকোয়েস্ট ম্যানুয়ালি হ্যান্ডেল করা (ওয়াইল্ডকার্ড ছাড়া)
+app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  next();
+});
 
 /* ================= DATABASE ================= */
 mongoose.connect(process.env.MONGO_URI)
@@ -70,7 +75,6 @@ const auth = (req, res, next) => {
       return res.status(401).json({ message: "No Token Provided" });
     }
     const token = authHeader.split(" ")[1];
-    
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded; 
     next();
@@ -84,116 +88,51 @@ const adminAuth = (req, res, next) => {
   else res.status(403).json({ message: "Admin access only" });
 };
 
-/* ================= AUTH ROUTES ================= */
+/* ================= ROUTES ================= */
 
+app.get("/", (req, res) => { res.send("🔥 Vinance API Live"); });
+
+// Register Route
 app.post("/api/register", async (req, res) => {
   try {
     let { name, email, password } = req.body;
-    if (!name || !email || !password) {
-      return res.status(400).json({ message: "Please fill all fields" });
-    }
+    if (!name || !email || !password) return res.status(400).json({ message: "Please fill all fields" });
 
     email = email.toLowerCase().trim();
     const userExists = await User.findOne({ email });
-    if (userExists) {
-      return res.status(400).json({ message: "Email already registered" });
-    }
+    if (userExists) return res.status(400).json({ message: "Email already registered" });
 
     const salt = bcrypt.genSaltSync(10);
     const hashedPassword = bcrypt.hashSync(password, salt);
 
-    await User.create({
-      name,
-      email,
-      password: hashedPassword
-    });
-
+    await User.create({ name, email, password: hashedPassword });
     res.status(201).json({ success: true, message: "Registration successful" });
   } catch (err) {
-    console.error("Register Error:", err);
     res.status(500).json({ message: "Register error", error: err.message });
   }
 });
 
+// Login Route
 app.post("/api/login", async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) {
-      return res.status(400).json({ message: "Email and password required" });
-    }
-
     const user = await User.findOne({ email: email.toLowerCase().trim() });
-    if (!user) {
-      return res.status(400).json({ message: "User not found" });
-    }
-
-    const isMatch = bcrypt.compareSync(password, user.password);
-    if (!isMatch) {
+    if (!user || !bcrypt.compareSync(password, user.password)) {
       return res.status(400).json({ message: "Invalid credentials" });
     }
 
-    const token = jwt.sign(
-      { id: user._id, role: user.role }, 
-      process.env.JWT_SECRET, 
-      { expiresIn: "7d" }
-    );
-
-    res.json({
-      token,
-      user: { id: user._id, name: user.name, role: user.role, balance: user.balance }
-    });
-  } catch (err) {
-    res.status(500).json({ message: "Login error" });
-  }
+    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
+    res.json({ token, user: { id: user._id, name: user.name, role: user.role, balance: user.balance } });
+  } catch (err) { res.status(500).json({ message: "Login error" }); }
 });
-
-/* ================= USER ROUTES ================= */
 
 app.get("/api/profile", auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select("-password");
-    if (!user) return res.status(404).json({ message: "User not found" });
     res.json(user);
-  } catch { res.status(500).json({ message: "Error fetching profile" }); }
-});
-
-app.post("/api/invest", auth, async (req, res) => {
-  try {
-    const { planId, amount } = req.body;
-    const user = await User.findById(req.user.id);
-    const plan = await Plan.findById(planId);
-    
-    if (!plan) return res.status(404).json({ message: "Plan not found" });
-    if (user.balance < Number(amount)) return res.status(400).json({ message: "Insufficient balance" });
-
-    user.balance -= Number(amount);
-    await user.save();
-
-    const expireAt = new Date();
-    expireAt.setHours(expireAt.getHours() + Number(plan.duration));
-
-    await Investment.create({ userId: user._id, planId, amount: Number(amount), status: "active", expireAt });
-    await Transaction.create({ userId: user._id, type: "investment", amount: Number(amount), status: "approved" });
-    
-    res.json({ success: true });
-  } catch (err) { 
-    res.status(500).json({ message: "Invest error" }); 
-  }
-});
-
-/* ================= ADMIN ROUTES ================= */
-
-app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
-  try {
-    const users = await User.find().select("-password").sort({ createdAt: -1 });
-    const requests = await Transaction.find().populate("userId", "name email").sort({ createdAt: -1 });
-    const investments = await Investment.find().populate("userId", "name email").populate("planId", "name profitPercent").sort({ createdAt: -1 });
-    res.json({ users, requests, investments });
-  } catch (err) { res.status(500).json({ message: "Admin data error" }); }
+  } catch { res.status(500).json({ message: "Error" }); }
 });
 
 /* ================= SERVER ================= */
-app.get("/", (req, res) => { res.send("🔥 Vinance API Live"); });
-
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server on port ${PORT}`));
