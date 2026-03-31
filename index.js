@@ -121,4 +121,7 @@ app.post("/api/login", async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
+app.get("/", (req, res) => {
+  res.send("🔥 Vinance API is running successfully!");
+});
 app.listen(PORT, () => console.log(`🚀 Server running on ${PORT}`));
