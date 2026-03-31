@@ -20,7 +20,11 @@ mongoose.connect(process.env.MONGO_URI).then(() => console.log("✅ DB Connected
 
 /* ================= MODELS ================= */
 const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema({
-  name: String, email: { type: String, unique: true }, password: String, role: { type: String, default: "user" }, balance: { type: Number, default: 0 }
+  name: String, 
+  email: { type: String, unique: true }, 
+  password: String, 
+  role: { type: String, default: "user" }, 
+  balance: { type: Number, default: 0 }
 }));
 
 const Plan = mongoose.models.Plan || mongoose.model("Plan", new mongoose.Schema({
@@ -29,14 +33,18 @@ const Plan = mongoose.models.Plan || mongoose.model("Plan", new mongoose.Schema(
 
 const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  type: { type: String, enum: ["deposit", "withdraw", "investment"] },
-  amount: Number, method: String, transactionId: String, status: { type: String, default: "pending" }
+  type: { type: String, enum: ["deposit", "withdraw", "investment", "sell"] },
+  amount: Number, 
+  method: String, 
+  transactionId: String, 
+  status: { type: String, default: "pending" }
 }, { timestamps: true }));
 
 const Investment = mongoose.models.Investment || mongoose.model("Investment", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   planId: { type: mongoose.Schema.Types.ObjectId, ref: "Plan" },
-  amount: Number, status: { type: String, default: "active" }
+  amount: Number, 
+  status: { type: String, default: "active" }
 }, { timestamps: true }));
 
 /* ================= AUTH MIDDLEWARE ================= */
@@ -57,37 +65,30 @@ const adminAuth = (req, res, next) => {
 
 /* ================= ROUTES ================= */
 
-// ✅ Register Route (ইউজার বানানোর জন্য লাগবেই)
+// 1. Auth Routes
 app.post("/api/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
-    const userExists = await User.findOne({ email: email.toLowerCase() });
-    if (userExists) return res.status(400).json({ message: "Email already exists" });
-
     const hashedPassword = bcrypt.hashSync(password, 10);
     await User.create({ name, email: email.toLowerCase(), password: hashedPassword });
     res.status(201).json({ success: true });
-  } catch (err) { res.status(500).json({ message: "Register failed" }); }
+  } catch (err) { res.status(500).json({ message: "Registration failed" }); }
 });
 
-// ✅ Login Route
 app.post("/api/login", async (req, res) => {
   const { email, password } = req.body;
   const user = await User.findOne({ email: email.toLowerCase() });
   if (!user || !bcrypt.compareSync(password, user.password)) return res.status(400).json({ message: "Wrong Info" });
-  
   const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
-  res.json({ token, user: { id: user._id, name: user.name, role: user.role, balance: user.balance } });
+  res.json({ token, user });
 });
 
 app.get("/api/profile", auth, async (req, res) => {
-  try {
-    const user = await User.findById(req.user.id).select("-password");
-    res.json(user);
-  } catch (err) { res.status(500).json({ message: "Server Error" }); }
+  const user = await User.findById(req.user.id).select("-password");
+  res.json(user);
 });
 
-// ✅ Trade Fix (Amount Number এ কনভার্ট করা হয়েছে)
+// 2. Investment & Trading
 app.post("/api/invest", auth, async (req, res) => {
   try {
     const { planId, amount } = req.body;
@@ -96,32 +97,52 @@ app.post("/api/invest", auth, async (req, res) => {
 
     user.balance -= Number(amount);
     await user.save();
-    
     await Investment.create({ userId: user._id, planId, amount: Number(amount) });
     await Transaction.create({ userId: user._id, type: "investment", amount: Number(amount), status: "approved" });
-    
     res.json({ success: true });
   } catch (err) { res.status(500).json({ message: "Trade failed" }); }
 });
 
-// ✅ Admin All Data (এটি আপনার কোডে ছিল না, তাই সব খালি দেখাচ্ছিল)
-app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
-  try {
-    const users = await User.find().select("-password");
-    const requests = await Transaction.find().populate("userId", "name email");
-    const investments = await Investment.find().populate("userId", "name email").populate("planId", "name");
-    
-    res.json({ users, requests, investments });
-  } catch (err) { res.status(500).json({ message: "Admin data error" }); }
-});
-
-app.get("/api/my-transactions", auth, async (req, res) => {
-  const data = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
+app.get("/api/my-investments", auth, async (req, res) => {
+  const data = await Investment.find({ userId: req.user.id }).populate("planId", "name profitPercent");
   res.json(data);
 });
 
-app.get("/api/plans", async (req, res) => {
-  res.json(await Plan.find({ status: true }));
+// 3. Admin Panel Routes (স্ক্রিনশটের সমস্যাগুলো এখানে সমাধান করা হয়েছে)
+app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
+  try {
+    const users = await User.find().select("-password");
+    const requests = await Transaction.find().populate("userId", "name email").sort({ createdAt: -1 });
+    const investments = await Investment.find().populate("userId", "name email").populate("planId", "name");
+    res.json({ users, requests, investments });
+  } catch (err) { res.status(500).json({ message: "Error fetching data" }); }
+});
+
+// এডমিন কর্তৃক ট্রানজাকশন অ্যাপ্রুভ (Approve/Reject Fix)
+app.post("/api/admin/update-status", auth, adminAuth, async (req, res) => {
+  try {
+    const { id, status } = req.body;
+    const transaction = await Transaction.findById(id);
+    if (!transaction) return res.status(404).json({ message: "Not found" });
+
+    transaction.status = status;
+    await transaction.save();
+
+    // যদি ডিপোজিট অ্যাপ্রুভ হয়, ইউজারের ব্যালেন্স বাড়িয়ে দাও
+    if (status === "approved" && transaction.type === "deposit") {
+        await User.findByIdAndUpdate(transaction.userId, { $inc: { balance: transaction.amount } });
+    }
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ message: "Update failed" }); }
+});
+
+// এডমিন কর্তৃক ব্যালেন্স আপডেট (Update Balance Fix)
+app.post("/api/admin/update-balance", auth, adminAuth, async (req, res) => {
+  try {
+    const { userId, balance } = req.body;
+    await User.findByIdAndUpdate(userId, { balance: Number(balance) });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ message: "Update failed" }); }
 });
 
 app.get("/", (req, res) => res.send("🔥 Vinance API Live!"));
