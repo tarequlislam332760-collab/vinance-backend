@@ -65,8 +65,30 @@ const adminAuth = (req, res, next) => {
 
 /* ================= ROUTES ================= */
 
-// --- ১. ইউজার অ্যাকশন (Deposit, Withdraw, Invest) ---
+// --- ১. ইউজার প্রোফাইল ও অথেন্টিকেশন ---
+app.post("/api/register", async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+    const hashedPassword = bcrypt.hashSync(password, 10);
+    await User.create({ name, email: email.toLowerCase(), password: hashedPassword });
+    res.status(201).json({ success: true });
+  } catch (err) { res.status(500).json({ message: "Failed" }); }
+});
 
+app.post("/api/login", async (req, res) => {
+  const { email, password } = req.body;
+  const user = await User.findOne({ email: email.toLowerCase() });
+  if (!user || !bcrypt.compareSync(password, user.password)) return res.status(400).json({ message: "Wrong Info" });
+  const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
+  res.json({ token, user });
+});
+
+app.get("/api/profile", auth, async (req, res) => {
+  const user = await User.findById(req.user.id).select("-password");
+  res.json(user);
+});
+
+// --- ২. ডিপোজিট, উইথড্র ও ট্রানজাকশন ---
 app.post("/api/deposit", auth, async (req, res) => {
   try {
     const { amount, method, transactionId } = req.body;
@@ -85,6 +107,37 @@ app.post("/api/withdraw", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Withdraw error" }); }
 });
 
+app.get("/api/transactions", auth, async (req, res) => {
+  const data = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
+  res.json(data);
+});
+
+// --- ৩. ট্রেড ও ইনভেস্টমেন্ট (Fixing 404/Undefined) ---
+app.post("/api/trade", auth, async (req, res) => {
+  try {
+    const { amount, type, symbol } = req.body;
+    const user = await User.findById(req.user.id);
+    
+    if (type === 'buy') {
+      if (user.balance < amount) return res.status(400).json({ message: "Insufficient Balance" });
+      user.balance -= amount;
+    } else if (type === 'sell') {
+      user.balance += amount; 
+    }
+    
+    await user.save();
+    await Transaction.create({ 
+      userId: user._id, 
+      type: type === 'buy' ? 'investment' : 'sell', 
+      amount, 
+      status: "approved",
+      method: symbol 
+    });
+    
+    res.json({ success: true, message: "Trade Successful", newBalance: user.balance });
+  } catch (err) { res.status(500).json({ message: "Trade failed" }); }
+});
+
 app.post("/api/invest", auth, async (req, res) => {
   try {
     const { planId, amount } = req.body;
@@ -96,11 +149,15 @@ app.post("/api/invest", auth, async (req, res) => {
     await Investment.create({ userId: user._id, planId, amount: Number(amount) });
     await Transaction.create({ userId: user._id, type: "investment", amount: Number(amount), status: "approved" });
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ message: "Trade failed" }); }
+  } catch (err) { res.status(500).json({ message: "Investment failed" }); }
 });
 
-// --- ২. অ্যাডমিন প্যানেল (All Logs & Controls) ---
+app.get("/api/my-investments", auth, async (req, res) => {
+  const data = await Investment.find({ userId: req.user.id }).populate("planId", "name profitPercent");
+  res.json(data);
+});
 
+// --- ৪. অ্যাডমিন প্যানেল কন্ট্রোল ---
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select("-password");
@@ -110,7 +167,7 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error fetching data" }); }
 });
 
-app.post("/api/admin/update-status", auth, adminAuth, async (req, res) => {
+app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
   try {
     const { id, status } = req.body;
     const transaction = await Transaction.findById(id);
@@ -139,33 +196,14 @@ app.post("/api/admin/create-plan", auth, adminAuth, async (req, res) => {
     const { name, minAmount, maxAmount, profitPercent, duration } = req.body;
     await Plan.create({ name, minAmount, maxAmount, profitPercent, duration });
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ message: "Failed" }); }
-});
-
-// --- ৩. সাধারণ রুট (Auth & Others) ---
-
-app.post("/api/register", async (req, res) => {
-  try {
-    const { name, email, password } = req.body;
-    const hashedPassword = bcrypt.hashSync(password, 10);
-    await User.create({ name, email: email.toLowerCase(), password: hashedPassword });
-    res.status(201).json({ success: true });
-  } catch (err) { res.status(500).json({ message: "Failed" }); }
-});
-
-app.post("/api/login", async (req, res) => {
-  const { email, password } = req.body;
-  const user = await User.findOne({ email: email.toLowerCase() });
-  if (!user || !bcrypt.compareSync(password, user.password)) return res.status(400).json({ message: "Wrong Info" });
-  const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
-  res.json({ token, user });
+  } catch (err) { res.status(500).json({ message: "Plan creation failed" }); }
 });
 
 app.get("/api/plans", async (req, res) => {
   res.json(await Plan.find({ status: true }));
 });
 
-app.get("/", (req, res) => res.send("🔥 API is Running!"));
+app.get("/", (req, res) => res.send("🔥 Vinance API is Live and Connected!"));
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server on ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
