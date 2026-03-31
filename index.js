@@ -56,7 +56,7 @@ const Investment = mongoose.models.Investment || mongoose.model("Investment", ne
   expireAt: Date
 }, { timestamps: true }));
 
-/* ================= AUTH MIDDLEWARE ================= */
+/* ================= AUTH MIDDLEWARE (FIXED) ================= */
 const auth = (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
@@ -64,7 +64,10 @@ const auth = (req, res, next) => {
       return res.status(401).json({ message: "No Token Provided" });
     }
     const token = authHeader.split(" ")[1];
-    req.user = jwt.verify(token, process.env.JWT_SECRET);
+    
+    // টোকেন ভেরিফাই করে সরাসরি req.user-এ অ্যাসাইন করা
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded; 
     next();
   } catch (err) {
     res.status(401).json({ message: "Invalid or Expired Token" });
@@ -78,7 +81,6 @@ const adminAuth = (req, res, next) => {
 
 /* ================= AUTH ROUTES ================= */
 
-// ✅ Register Route (Sync Version for Stability)
 app.post("/api/register", async (req, res) => {
   try {
     let { name, email, password } = req.body;
@@ -92,7 +94,7 @@ app.post("/api/register", async (req, res) => {
       return res.status(400).json({ message: "Email already registered" });
     }
 
-    // Sync method ব্যবহার করা হয়েছে যাতে সার্ভারে হ্যাং না হয়
+    // Sync hashing
     const salt = bcrypt.genSaltSync(10);
     const hashedPassword = bcrypt.hashSync(password, salt);
 
@@ -104,12 +106,10 @@ app.post("/api/register", async (req, res) => {
 
     res.status(201).json({ success: true, message: "Registration successful" });
   } catch (err) {
-    console.error("Register Error:", err);
     res.status(500).json({ message: "Register error" });
   }
 });
 
-// ✅ Login Route (Sync Version for Stability)
 app.post("/api/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -122,7 +122,7 @@ app.post("/api/login", async (req, res) => {
       return res.status(400).json({ message: "User not found" });
     }
 
-    // bcrypt.compareSync ব্যবহার করা হয়েছে
+    // Sync compare
     const isMatch = bcrypt.compareSync(password, user.password);
     if (!isMatch) {
       return res.status(400).json({ message: "Invalid credentials" });
@@ -139,15 +139,17 @@ app.post("/api/login", async (req, res) => {
       user: { id: user._id, name: user.name, role: user.role, balance: user.balance }
     });
   } catch (err) {
-    console.error("Login Error:", err);
     res.status(500).json({ message: "Login error" });
   }
 });
 
 /* ================= USER ROUTES ================= */
+
 app.get("/api/profile", auth, async (req, res) => {
   try {
+    // req.user.id এখন সঠিকভাবে কাজ করবে
     const user = await User.findById(req.user.id).select("-password");
+    if (!user) return res.status(404).json({ message: "User not found" });
     res.json(user);
   } catch { res.status(500).json({ message: "Error fetching profile" }); }
 });
@@ -157,6 +159,7 @@ app.post("/api/invest", auth, async (req, res) => {
     const { planId, amount } = req.body;
     const user = await User.findById(req.user.id);
     const plan = await Plan.findById(planId);
+    
     if (!plan) return res.status(404).json({ message: "Plan not found" });
     if (user.balance < Number(amount)) return res.status(400).json({ message: "Insufficient balance" });
 
@@ -170,10 +173,13 @@ app.post("/api/invest", auth, async (req, res) => {
     await Transaction.create({ userId: user._id, type: "investment", amount: Number(amount), status: "approved" });
     
     res.json({ success: true });
-  } catch { res.status(500).json({ message: "Invest error" }); }
+  } catch (err) { 
+    res.status(500).json({ message: "Invest error" }); 
+  }
 });
 
 /* ================= ADMIN ROUTES ================= */
+
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select("-password").sort({ createdAt: -1 });
