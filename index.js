@@ -64,7 +64,8 @@ const auth = (req, res, next) => {
       return res.status(401).json({ message: "No Token Provided" });
     }
     const token = authHeader.split(" ")[1];
-    req.user = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
     next();
   } catch (err) {
     res.status(401).json({ message: "Invalid or Expired Token" });
@@ -78,7 +79,7 @@ const adminAuth = (req, res, next) => {
 
 /* ================= AUTH ROUTES ================= */
 
-// ✅ Register Route Fixed
+// ✅ Register Route Fixed (bcryptjs optimization)
 app.post("/api/register", async (req, res) => {
   try {
     let { name, email, password } = req.body;
@@ -92,8 +93,8 @@ app.post("/api/register", async (req, res) => {
       return res.status(400).json({ message: "Email already registered" });
     }
 
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
+    // সরাসরি পাসওয়ার্ড হ্যাশ করা (Vercel friendly)
+    const hashedPassword = await bcrypt.hash(password, 10);
 
     const user = await User.create({
       name,
@@ -101,7 +102,6 @@ app.post("/api/register", async (req, res) => {
       password: hashedPassword
     });
 
-    console.log(`👤 New user registered: ${email}`);
     res.status(201).json({ success: true, message: "Registration successful" });
 
   } catch (err) {
@@ -110,7 +110,7 @@ app.post("/api/register", async (req, res) => {
   }
 });
 
-// ✅ Login Route Fixed
+// ✅ Login Route Fixed (Direct Comparison)
 app.post("/api/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -128,18 +128,12 @@ app.post("/api/login", async (req, res) => {
       return res.status(400).json({ message: "Invalid email or password" });
     }
 
-    if (!process.env.JWT_SECRET) {
-      console.error("❌ JWT_SECRET is missing in .env");
-      return res.status(500).json({ message: "Server configuration error" });
-    }
-
     const token = jwt.sign(
       { id: user._id, role: user.role }, 
       process.env.JWT_SECRET, 
       { expiresIn: "7d" }
     );
 
-    console.log(`🔑 User logged in: ${email}`);
     res.json({
       token,
       user: { id: user._id, name: user.name, role: user.role, balance: user.balance }
