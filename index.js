@@ -39,6 +39,16 @@ const Investment = mongoose.models.Investment || mongoose.model("Investment", ne
   amount: Number, status: { type: String, default: "active" }
 }, { timestamps: true }));
 
+// --- নতুন ফিউচার ট্রেড মডেল ---
+const FuturesTrade = mongoose.models.FuturesTrade || mongoose.model("FuturesTrade", new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  symbol: String,
+  type: { type: String, enum: ["buy", "sell"] },
+  amount: Number,
+  leverage: Number,
+  status: { type: String, default: "open" }
+}, { timestamps: true }));
+
 /* ================= AUTH MIDDLEWARE ================= */
 const auth = (req, res, next) => {
   try {
@@ -104,7 +114,7 @@ app.get("/api/transactions", auth, async (req, res) => {
   res.json(data);
 });
 
-// --- ৩. ট্রেড ও ইনভেস্টমেন্ট লগস ---
+// --- ৩. স্পট ট্রেড ও ইনভেস্টমেন্ট ---
 app.post("/api/trade", auth, async (req, res) => {
   try {
     const { amount, type, symbol } = req.body;
@@ -134,7 +144,6 @@ app.post("/api/invest", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Investment failed" }); }
 });
 
-// User's own investment logs
 app.get("/api/my-investments", auth, async (req, res) => {
   try {
     const data = await Investment.find({ userId: req.user.id }).populate("planId");
@@ -142,29 +151,72 @@ app.get("/api/my-investments", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error fetching logs" }); }
 });
 
-// --- ৪. অ্যাডমিন প্যানেল কন্ট্রোল (Fixed) ---
+// --- ৪. নতুন ফিউচার ট্রেড সেকশন ---
+app.post("/api/futures/trade", auth, async (req, res) => {
+  try {
+    const { amount, type, symbol, leverage } = req.body;
+    const user = await User.findById(req.user.id);
+
+    if (user.balance < Number(amount)) {
+      return res.status(400).json({ message: "Insufficient Balance" });
+    }
+
+    user.balance -= Number(amount);
+    await user.save();
+
+    await FuturesTrade.create({
+      userId: user._id,
+      symbol,
+      type, 
+      amount: Number(amount),
+      leverage: Number(leverage),
+      status: "open"
+    });
+
+    await Transaction.create({ 
+      userId: user._id, 
+      type: "investment", 
+      amount: Number(amount), 
+      status: "approved", 
+      method: `${symbol} Futures ${leverage}x` 
+    });
+
+    res.json({ 
+      success: true, 
+      message: `${symbol} Futures Trade Successful!`, 
+      newBalance: user.balance 
+    });
+  } catch (err) { 
+    res.status(500).json({ message: "Futures trade failed" }); 
+  }
+});
+
+app.get("/api/my-futures", auth, async (req, res) => {
+  try {
+    const data = await FuturesTrade.find({ userId: req.user.id }).sort({ createdAt: -1 });
+    res.json(data);
+  } catch (err) { res.status(500).json({ message: "Error fetching futures logs" }); }
+});
+
+// --- ৫. অ্যাডমিন প্যানেল কন্ট্রোল ---
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select("-password");
-    // Populate userId to show name/email in Admin Transaction logs
     const requests = await Transaction.find().populate("userId", "name email").sort({ createdAt: -1 });
-    // Populate userId and planId to show names in Admin Investment logs
     const investments = await Investment.find().populate("userId", "name email").populate("planId", "name");
     res.json({ users, requests, investments });
   } catch (err) { res.status(500).json({ message: "Error fetching admin data" }); }
 });
 
-// Reject/Approve handle করার জন্য নির্দিষ্ট রুট ( handle-request )
 app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
   try {
-    const { id, status } = req.body; // ফ্রন্টএন্ড থেকে আইডি এবং স্ট্যাটাস আসবে
+    const { id, status } = req.body; 
     const transaction = await Transaction.findById(id);
     if (!transaction) return res.status(404).json({ message: "Transaction not found" });
 
     transaction.status = status;
     await transaction.save();
 
-    // যদি ডিপোজিট অ্যাপ্রুভ হয়, তবে ইউজারের ব্যালেন্স বাড়িয়ে দাও
     if (status === "approved" && transaction.type === "deposit") {
       await User.findByIdAndUpdate(transaction.userId, { $inc: { balance: transaction.amount } });
     }
