@@ -64,8 +64,7 @@ const auth = (req, res, next) => {
       return res.status(401).json({ message: "No Token Provided" });
     }
     const token = authHeader.split(" ")[1];
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
+    req.user = jwt.verify(token, process.env.JWT_SECRET);
     next();
   } catch (err) {
     res.status(401).json({ message: "Invalid or Expired Token" });
@@ -79,7 +78,7 @@ const adminAuth = (req, res, next) => {
 
 /* ================= AUTH ROUTES ================= */
 
-// ✅ Register Route Fixed (bcryptjs optimization)
+// ✅ Register Route (Sync Version for Stability)
 app.post("/api/register", async (req, res) => {
   try {
     let { name, email, password } = req.body;
@@ -93,24 +92,24 @@ app.post("/api/register", async (req, res) => {
       return res.status(400).json({ message: "Email already registered" });
     }
 
-    // সরাসরি পাসওয়ার্ড হ্যাশ করা (Vercel friendly)
-    const hashedPassword = await bcrypt.hash(password, 10);
+    // Sync method ব্যবহার করা হয়েছে যাতে সার্ভারে হ্যাং না হয়
+    const salt = bcrypt.genSaltSync(10);
+    const hashedPassword = bcrypt.hashSync(password, salt);
 
-    const user = await User.create({
+    await User.create({
       name,
       email,
       password: hashedPassword
     });
 
     res.status(201).json({ success: true, message: "Registration successful" });
-
   } catch (err) {
     console.error("Register Error:", err);
-    res.status(500).json({ message: "Server error during registration" });
+    res.status(500).json({ message: "Register error" });
   }
 });
 
-// ✅ Login Route Fixed (Direct Comparison)
+// ✅ Login Route (Sync Version for Stability)
 app.post("/api/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -120,12 +119,13 @@ app.post("/api/login", async (req, res) => {
 
     const user = await User.findOne({ email: email.toLowerCase().trim() });
     if (!user) {
-      return res.status(400).json({ message: "Invalid email or password" });
+      return res.status(400).json({ message: "User not found" });
     }
 
-    const isMatch = await bcrypt.compare(password, user.password);
+    // bcrypt.compareSync ব্যবহার করা হয়েছে
+    const isMatch = bcrypt.compareSync(password, user.password);
     if (!isMatch) {
-      return res.status(400).json({ message: "Invalid email or password" });
+      return res.status(400).json({ message: "Invalid credentials" });
     }
 
     const token = jwt.sign(
@@ -138,10 +138,9 @@ app.post("/api/login", async (req, res) => {
       token,
       user: { id: user._id, name: user.name, role: user.role, balance: user.balance }
     });
-
   } catch (err) {
     console.error("Login Error:", err);
-    res.status(500).json({ message: "Server error during login" });
+    res.status(500).json({ message: "Login error" });
   }
 });
 
@@ -180,44 +179,8 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
     const users = await User.find().select("-password").sort({ createdAt: -1 });
     const requests = await Transaction.find().populate("userId", "name email").sort({ createdAt: -1 });
     const investments = await Investment.find().populate("userId", "name email").populate("planId", "name profitPercent").sort({ createdAt: -1 });
-
     res.json({ users, requests, investments });
   } catch (err) { res.status(500).json({ message: "Admin data error" }); }
-});
-
-app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
-  try {
-    const { requestId, status } = req.body;
-    const trx = await Transaction.findById(requestId);
-    if (!trx || trx.status !== "pending") return res.status(400).json({ message: "Request not pending" });
-
-    if (status === "approved" && trx.type === "deposit") {
-      await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
-    }
-    
-    if (status === "rejected" && trx.type === "withdraw") {
-      await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
-    }
-
-    trx.status = status;
-    await trx.save();
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ message: "Request handle error" }); }
-});
-
-app.post("/api/admin/update-balance", auth, adminAuth, async (req, res) => {
-  try {
-    const { userId, balance } = req.body;
-    await User.findByIdAndUpdate(userId, { balance: Number(balance) });
-    res.json({ success: true });
-  } catch { res.status(500).json({ message: "Update balance error" }); }
-});
-
-app.post("/api/admin/create-plan", auth, adminAuth, async (req, res) => {
-  try {
-    await Plan.create(req.body);
-    res.json({ success: true });
-  } catch { res.status(500).json({ success: false }); }
 });
 
 /* ================= SERVER ================= */
