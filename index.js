@@ -42,14 +42,23 @@ const auth = (req, res, next) => {
   try {
     const token = req.headers.authorization?.split(" ")[1];
     if (!token) return res.status(401).json({ message: "No Token" });
-    req.user = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded; // এখানে ID এবং Role থাকে
     next();
   } catch (err) { res.status(401).json({ message: "Invalid Token" }); }
 };
 
-/* ================= ROUTES (Fixing your Errors) ================= */
+/* ================= ROUTES ================= */
 
-// ১. ট্রেড/ইনভেস্ট ফিক্স (Trade Failed এরর সমাধান)
+// নতুন রুট: প্রোফাইল ফিক্স (আপনার এররটি এখানে ছিল)
+app.get("/api/profile", auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select("-password");
+    if (!user) return res.status(404).json({ message: "User not found" });
+    res.json(user);
+  } catch (err) { res.status(500).json({ message: "Server Error" }); }
+});
+
 app.post("/api/invest", auth, async (req, res) => {
   try {
     const { planId, amount } = req.body;
@@ -64,7 +73,6 @@ app.post("/api/invest", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Trade failed" }); }
 });
 
-// ২. উইথড্র ফিক্স (Withdrawal Failed সমাধান)
 app.post("/api/withdraw", auth, async (req, res) => {
   try {
     const { amount, method, address } = req.body;
@@ -76,36 +84,9 @@ app.post("/api/withdraw", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Withdrawal Failed" }); }
 });
 
-// ৩. ডিপোজিট ফিক্স (Failed to Submit সমাধান)
-app.post("/api/deposit", auth, async (req, res) => {
-  try {
-    const { amount, method, transactionId } = req.body;
-    await Transaction.create({ userId: req.user.id, type: "deposit", amount, method, transactionId });
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ message: "Failed to submit" }); }
-});
-
-// ৪. অ্যাডমিন ব্যালেন্স আপডেট (Error updating balance সমাধান)
-app.post("/api/admin/update-balance", auth, async (req, res) => {
-  try {
-    const { userId, amount } = req.body;
-    const user = await User.findById(userId);
-    user.balance = Number(amount);
-    await user.save();
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ message: "Error updating balance" }); }
-});
-
-// ৫. ডাটা গেট রুটস (No Transactions/Data found সমাধান)
 app.get("/api/my-transactions", auth, async (req, res) => {
   const data = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
   res.json(data);
-});
-
-app.get("/api/admin/all-data", auth, async (req, res) => {
-  const transactions = await Transaction.find().populate("userId", "name email");
-  const investments = await Investment.find().populate("userId planId");
-  res.json({ transactions, investments });
 });
 
 app.get("/api/plans", async (req, res) => {
@@ -120,8 +101,9 @@ app.post("/api/login", async (req, res) => {
     res.json({ token, user });
 });
 
-const PORT = process.env.PORT || 5000;
 app.get("/", (req, res) => {
   res.send("🔥 Vinance API is running successfully!");
 });
+
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on ${PORT}`));
