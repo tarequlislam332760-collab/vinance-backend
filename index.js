@@ -20,11 +20,7 @@ mongoose.connect(process.env.MONGO_URI).then(() => console.log("✅ DB Connected
 
 /* ================= MODELS ================= */
 const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema({
-  name: String, 
-  email: { type: String, unique: true }, 
-  password: String, 
-  role: { type: String, default: "user" }, 
-  balance: { type: Number, default: 0 }
+  name: String, email: { type: String, unique: true }, password: String, role: { type: String, default: "user" }, balance: { type: Number, default: 0 }
 }));
 
 const Plan = mongoose.models.Plan || mongoose.model("Plan", new mongoose.Schema({
@@ -34,17 +30,13 @@ const Plan = mongoose.models.Plan || mongoose.model("Plan", new mongoose.Schema(
 const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   type: { type: String, enum: ["deposit", "withdraw", "investment", "sell"] },
-  amount: Number, 
-  method: String, 
-  transactionId: String, 
-  status: { type: String, default: "pending" }
+  amount: Number, method: String, transactionId: String, status: { type: String, default: "pending" }
 }, { timestamps: true }));
 
 const Investment = mongoose.models.Investment || mongoose.model("Investment", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   planId: { type: mongoose.Schema.Types.ObjectId, ref: "Plan" },
-  amount: Number, 
-  status: { type: String, default: "active" }
+  amount: Number, status: { type: String, default: "active" }
 }, { timestamps: true }));
 
 /* ================= AUTH MIDDLEWARE ================= */
@@ -65,7 +57,7 @@ const adminAuth = (req, res, next) => {
 
 /* ================= ROUTES ================= */
 
-// --- ১. ইউজার প্রোফাইল ও অথেন্টিকেশন ---
+// --- ১. ইউজার অ্যাকশনস ---
 app.post("/api/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -93,7 +85,7 @@ app.post("/api/deposit", auth, async (req, res) => {
   try {
     const { amount, method, transactionId } = req.body;
     await Transaction.create({ userId: req.user.id, type: "deposit", amount: Number(amount), method, transactionId });
-    res.json({ success: true });
+    res.json({ success: true, message: "Deposit request submitted" });
   } catch (err) { res.status(500).json({ message: "Deposit error" }); }
 });
 
@@ -103,7 +95,7 @@ app.post("/api/withdraw", auth, async (req, res) => {
     const user = await User.findById(req.user.id);
     if (user.balance < Number(amount)) return res.status(400).json({ message: "Low Balance" });
     await Transaction.create({ userId: req.user.id, type: "withdraw", amount: Number(amount), method, transactionId });
-    res.json({ success: true });
+    res.json({ success: true, message: "Withdraw request submitted" });
   } catch (err) { res.status(500).json({ message: "Withdraw error" }); }
 });
 
@@ -112,28 +104,19 @@ app.get("/api/transactions", auth, async (req, res) => {
   res.json(data);
 });
 
-// --- ৩. ট্রেড ও ইনভেস্টমেন্ট (Fixing 404/Undefined) ---
+// --- ৩. ট্রেড ও ইনভেস্টমেন্ট লগস ---
 app.post("/api/trade", auth, async (req, res) => {
   try {
     const { amount, type, symbol } = req.body;
     const user = await User.findById(req.user.id);
-    
     if (type === 'buy') {
       if (user.balance < amount) return res.status(400).json({ message: "Insufficient Balance" });
       user.balance -= amount;
     } else if (type === 'sell') {
       user.balance += amount; 
     }
-    
     await user.save();
-    await Transaction.create({ 
-      userId: user._id, 
-      type: type === 'buy' ? 'investment' : 'sell', 
-      amount, 
-      status: "approved",
-      method: symbol 
-    });
-    
+    await Transaction.create({ userId: user._id, type: type === 'buy' ? 'investment' : 'sell', amount, status: "approved", method: symbol });
     res.json({ success: true, message: "Trade Successful", newBalance: user.balance });
   } catch (err) { res.status(500).json({ message: "Trade failed" }); }
 });
@@ -143,44 +126,50 @@ app.post("/api/invest", auth, async (req, res) => {
     const { planId, amount } = req.body;
     const user = await User.findById(req.user.id);
     if (user.balance < Number(amount)) return res.status(400).json({ message: "Low Balance" });
-
     user.balance -= Number(amount);
     await user.save();
     await Investment.create({ userId: user._id, planId, amount: Number(amount) });
     await Transaction.create({ userId: user._id, type: "investment", amount: Number(amount), status: "approved" });
-    res.json({ success: true });
+    res.json({ success: true, message: "Investment Successful" });
   } catch (err) { res.status(500).json({ message: "Investment failed" }); }
 });
 
+// User's own investment logs
 app.get("/api/my-investments", auth, async (req, res) => {
-  const data = await Investment.find({ userId: req.user.id }).populate("planId", "name profitPercent");
-  res.json(data);
+  try {
+    const data = await Investment.find({ userId: req.user.id }).populate("planId");
+    res.json(data);
+  } catch (err) { res.status(500).json({ message: "Error fetching logs" }); }
 });
 
-// --- ৪. অ্যাডমিন প্যানেল কন্ট্রোল ---
+// --- ৪. অ্যাডমিন প্যানেল কন্ট্রোল (Fixed) ---
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select("-password");
+    // Populate userId to show name/email in Admin Transaction logs
     const requests = await Transaction.find().populate("userId", "name email").sort({ createdAt: -1 });
+    // Populate userId and planId to show names in Admin Investment logs
     const investments = await Investment.find().populate("userId", "name email").populate("planId", "name");
     res.json({ users, requests, investments });
-  } catch (err) { res.status(500).json({ message: "Error fetching data" }); }
+  } catch (err) { res.status(500).json({ message: "Error fetching admin data" }); }
 });
 
+// Reject/Approve handle করার জন্য নির্দিষ্ট রুট ( handle-request )
 app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
   try {
-    const { id, status } = req.body;
+    const { id, status } = req.body; // ফ্রন্টএন্ড থেকে আইডি এবং স্ট্যাটাস আসবে
     const transaction = await Transaction.findById(id);
-    if (!transaction) return res.status(404).json({ message: "Not found" });
+    if (!transaction) return res.status(404).json({ message: "Transaction not found" });
 
     transaction.status = status;
     await transaction.save();
 
+    // যদি ডিপোজিট অ্যাপ্রুভ হয়, তবে ইউজারের ব্যালেন্স বাড়িয়ে দাও
     if (status === "approved" && transaction.type === "deposit") {
       await User.findByIdAndUpdate(transaction.userId, { $inc: { balance: transaction.amount } });
     }
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ message: "Update failed" }); }
+    res.json({ success: true, message: `Request ${status} successfully` });
+  } catch (err) { res.status(500).json({ message: "Action failed" }); }
 });
 
 app.post("/api/admin/update-balance", auth, adminAuth, async (req, res) => {
@@ -203,7 +192,7 @@ app.get("/api/plans", async (req, res) => {
   res.json(await Plan.find({ status: true }));
 });
 
-app.get("/", (req, res) => res.send("🔥 Vinance API is Live and Connected!"));
+app.get("/", (req, res) => res.send("🔥 Vinance API is Live!"));
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Server on ${PORT}`));
