@@ -41,7 +41,7 @@ const Plan = mongoose.models.Plan || mongoose.model("Plan", new mongoose.Schema(
 
 const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  type: String, // deposit, withdraw, investment
+  type: String, 
   amount: Number,
   status: { type: String, default: "pending" }
 }, { timestamps: true }));
@@ -100,7 +100,6 @@ app.post("/api/login", async (req, res) => {
 
 /* ================= USER ROUTES ================= */
 
-// ✅ Profile রুট (এটি আপনার ৪০৪ এরর ঠিক করবে)
 app.get("/api/profile", auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select("-password");
@@ -108,7 +107,6 @@ app.get("/api/profile", auth, async (req, res) => {
   } catch { res.status(500).json({ message: "Error fetching profile" }); }
 });
 
-// ✅ Transactions রুট (Activity fetching issue ঠিক করবে)
 app.get("/api/transactions", auth, async (req, res) => {
   try {
     const trx = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
@@ -121,22 +119,23 @@ app.get("/api/plans", async (req, res) => {
   res.json(plans);
 });
 
+// ✅ Trade/Invest ফিক্সড
 app.post("/api/invest", auth, async (req, res) => {
   try {
     const { planId, amount } = req.body;
     const user = await User.findById(req.user.id);
     const plan = await Plan.findById(planId);
     if (!plan) return res.status(404).json({ message: "Plan not found" });
-    if (user.balance < amount) return res.status(400).json({ message: "No balance" });
+    if (user.balance < Number(amount)) return res.status(400).json({ message: "No balance" });
 
-    user.balance -= amount;
+    user.balance -= Number(amount);
     await user.save();
 
     const expireAt = new Date();
-    expireAt.setHours(expireAt.getHours() + plan.duration);
+    expireAt.setHours(expireAt.getHours() + Number(plan.duration));
 
-    await Investment.create({ userId: user._id, planId, amount, status: "active", expireAt });
-    await Transaction.create({ userId: user._id, type: "investment", amount, status: "approved" });
+    await Investment.create({ userId: user._id, planId, amount: Number(amount), status: "active", expireAt });
+    await Transaction.create({ userId: user._id, type: "investment", amount: Number(amount), status: "approved" });
     res.json({ success: true });
   } catch { res.status(500).json({ message: "Invest error" }); }
 });
@@ -146,6 +145,21 @@ app.post("/api/deposit", auth, async (req, res) => {
     await Transaction.create({ userId: req.user.id, type: "deposit", amount: Number(req.body.amount), status: "pending" });
     res.json({ success: true });
   } catch { res.status(500).json({ message: "Deposit error" }); }
+});
+
+// ✅ Withdraw রুট (এটি মিসিং ছিল)
+app.post("/api/withdraw", auth, async (req, res) => {
+  try {
+    const amount = Number(req.body.amount);
+    const user = await User.findById(req.user.id);
+    if (user.balance < amount) return res.status(400).json({ message: "Insufficient balance" });
+
+    user.balance -= amount;
+    await user.save();
+
+    await Transaction.create({ userId: user._id, type: "withdraw", amount, status: "pending" });
+    res.json({ success: true });
+  } catch { res.status(500).json({ message: "Withdrawal Failed" }); }
 });
 
 /* ================= ADMIN ROUTES ================= */
@@ -160,8 +174,10 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
 });
 
 app.post("/api/admin/update-balance", auth, adminAuth, async (req, res) => {
-  await User.findByIdAndUpdate(req.body.userId, { balance: Number(req.body.balance) });
-  res.json({ success: true });
+  try {
+    await User.findByIdAndUpdate(req.body.userId, { balance: Number(req.body.balance) });
+    res.json({ success: true });
+  } catch { res.status(500).json({ message: "Update balance error" }); }
 });
 
 app.post("/api/admin/create-plan", auth, adminAuth, async (req, res) => {
@@ -171,16 +187,24 @@ app.post("/api/admin/create-plan", auth, adminAuth, async (req, res) => {
   } catch { res.status(500).json({ success: false }); }
 });
 
+// ✅ Request Handling (লজিক ফিক্সড)
 app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
   try {
-    const trx = await Transaction.findById(req.body.requestId);
-    if (req.body.status === "approved" && trx.type === "deposit") {
+    const { requestId, status } = req.body;
+    const trx = await Transaction.findById(requestId);
+    if (!trx) return res.status(404).json({ message: "Request not found" });
+
+    // যদি ডিপোজিট এপ্রুভ হয়, তবে ব্যালেন্স বাড়বে
+    if (status === "approved" && trx.type === "deposit" && trx.status === "pending") {
       await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
     }
-    if (req.body.status === "rejected" && trx.type === "withdraw") {
+    
+    // যদি উইথড্র রিজেক্ট হয়, তবে ব্যালেন্স ফেরত যাবে
+    if (status === "rejected" && trx.type === "withdraw" && trx.status === "pending") {
       await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
     }
-    trx.status = req.body.status;
+
+    trx.status = status;
     await trx.save();
     res.json({ success: true });
   } catch { res.status(500).json({ message: "Request handle error" }); }
@@ -189,6 +213,7 @@ app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
 /* ================= SERVER ================= */
 app.get("/", (req, res) => { res.send("🔥 Vinance API Running"); });
 
-app.listen(process.env.PORT || 5000, () => {
-  console.log("🚀 Server listening on port 5000");
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`🚀 Server listening on port ${PORT}`);
 });
