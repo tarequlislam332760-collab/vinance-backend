@@ -8,12 +8,14 @@ import dotenv from "dotenv";
 dotenv.config();
 const app = express();
 
+/* ================= MIDDLEWARE ================= */
 app.use(cors({
   origin: ["https://vinance-frontend-vjqa.vercel.app", "https://vinance-frontend.vercel.app", "http://localhost:5173"],
   credentials: true
 }));
 app.use(express.json());
 
+/* ================= DATABASE ================= */
 mongoose.connect(process.env.MONGO_URI).then(() => console.log("✅ DB Connected"));
 
 /* ================= MODELS ================= */
@@ -43,45 +45,74 @@ const auth = (req, res, next) => {
     const token = req.headers.authorization?.split(" ")[1];
     if (!token) return res.status(401).json({ message: "No Token" });
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded; // এখানে ID এবং Role থাকে
+    req.user = decoded; 
     next();
   } catch (err) { res.status(401).json({ message: "Invalid Token" }); }
 };
 
+const adminAuth = (req, res, next) => {
+  if (req.user?.role === "admin") next();
+  else res.status(403).json({ message: "Admin access only" });
+};
+
 /* ================= ROUTES ================= */
 
-// নতুন রুট: প্রোফাইল ফিক্স (আপনার এররটি এখানে ছিল)
+// ✅ Register Route (ইউজার বানানোর জন্য লাগবেই)
+app.post("/api/register", async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+    const userExists = await User.findOne({ email: email.toLowerCase() });
+    if (userExists) return res.status(400).json({ message: "Email already exists" });
+
+    const hashedPassword = bcrypt.hashSync(password, 10);
+    await User.create({ name, email: email.toLowerCase(), password: hashedPassword });
+    res.status(201).json({ success: true });
+  } catch (err) { res.status(500).json({ message: "Register failed" }); }
+});
+
+// ✅ Login Route
+app.post("/api/login", async (req, res) => {
+  const { email, password } = req.body;
+  const user = await User.findOne({ email: email.toLowerCase() });
+  if (!user || !bcrypt.compareSync(password, user.password)) return res.status(400).json({ message: "Wrong Info" });
+  
+  const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
+  res.json({ token, user: { id: user._id, name: user.name, role: user.role, balance: user.balance } });
+});
+
 app.get("/api/profile", auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select("-password");
-    if (!user) return res.status(404).json({ message: "User not found" });
     res.json(user);
   } catch (err) { res.status(500).json({ message: "Server Error" }); }
 });
 
+// ✅ Trade Fix (Amount Number এ কনভার্ট করা হয়েছে)
 app.post("/api/invest", auth, async (req, res) => {
   try {
     const { planId, amount } = req.body;
     const user = await User.findById(req.user.id);
-    if (user.balance < amount) return res.status(400).json({ message: "Low Balance" });
+    if (user.balance < Number(amount)) return res.status(400).json({ message: "Low Balance" });
 
     user.balance -= Number(amount);
     await user.save();
-    await Investment.create({ userId: user._id, planId, amount });
-    await Transaction.create({ userId: user._id, type: "investment", amount, status: "approved" });
+    
+    await Investment.create({ userId: user._id, planId, amount: Number(amount) });
+    await Transaction.create({ userId: user._id, type: "investment", amount: Number(amount), status: "approved" });
+    
     res.json({ success: true });
   } catch (err) { res.status(500).json({ message: "Trade failed" }); }
 });
 
-app.post("/api/withdraw", auth, async (req, res) => {
+// ✅ Admin All Data (এটি আপনার কোডে ছিল না, তাই সব খালি দেখাচ্ছিল)
+app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
-    const { amount, method, address } = req.body;
-    const user = await User.findById(req.user.id);
-    if (user.balance < amount) return res.status(400).json({ message: "Insufficient Balance" });
+    const users = await User.find().select("-password");
+    const requests = await Transaction.find().populate("userId", "name email");
+    const investments = await Investment.find().populate("userId", "name email").populate("planId", "name");
     
-    await Transaction.create({ userId: user._id, type: "withdraw", amount, method, transactionId: address });
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ message: "Withdrawal Failed" }); }
+    res.json({ users, requests, investments });
+  } catch (err) { res.status(500).json({ message: "Admin data error" }); }
 });
 
 app.get("/api/my-transactions", auth, async (req, res) => {
@@ -93,17 +124,7 @@ app.get("/api/plans", async (req, res) => {
   res.json(await Plan.find({ status: true }));
 });
 
-app.post("/api/login", async (req, res) => {
-    const { email, password } = req.body;
-    const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user || !bcrypt.compareSync(password, user.password)) return res.status(400).json({ message: "Wrong Info" });
-    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET);
-    res.json({ token, user });
-});
-
-app.get("/", (req, res) => {
-  res.send("🔥 Vinance API is running successfully!");
-});
+app.get("/", (req, res) => res.send("🔥 Vinance API Live!"));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on ${PORT}`));
