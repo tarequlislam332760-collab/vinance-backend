@@ -10,11 +10,18 @@ dotenv.config();
 const app = express();
 
 /* ================= MIDDLEWARE ================= */
+// CORS পলিসি আপডেট করা হয়েছে যাতে ফ্রন্টএন্ড থেকে রিকোয়েস্ট ব্লক না হয়
 app.use(cors({
-  origin: ["https://vinance-frontend-vjqa.vercel.app", "http://localhost:5173"],
+  origin: ["https://vinance-frontend-vjqa.vercel.app", "https://vinance-frontend.vercel.app", "http://localhost:5173"],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
   credentials: true
 }));
+
 app.use(express.json());
+
+// OPTIONS রিকোয়েস্ট হ্যান্ডেল করার জন্য (CORS এরর দূর করতে সাহায্য করে)
+app.options('*', cors());
 
 /* ================= DATABASE ================= */
 mongoose.connect(process.env.MONGO_URI)
@@ -56,7 +63,7 @@ const Investment = mongoose.models.Investment || mongoose.model("Investment", ne
   expireAt: Date
 }, { timestamps: true }));
 
-/* ================= AUTH MIDDLEWARE (FIXED) ================= */
+/* ================= AUTH MIDDLEWARE ================= */
 const auth = (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
@@ -65,7 +72,6 @@ const auth = (req, res, next) => {
     }
     const token = authHeader.split(" ")[1];
     
-    // টোকেন ভেরিফাই করে সরাসরি req.user-এ অ্যাসাইন করা
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded; 
     next();
@@ -81,6 +87,7 @@ const adminAuth = (req, res, next) => {
 
 /* ================= AUTH ROUTES ================= */
 
+// Register Route
 app.post("/api/register", async (req, res) => {
   try {
     let { name, email, password } = req.body;
@@ -94,7 +101,7 @@ app.post("/api/register", async (req, res) => {
       return res.status(400).json({ message: "Email already registered" });
     }
 
-    // Sync hashing
+    // Sync hashing for better stability on Vercel
     const salt = bcrypt.genSaltSync(10);
     const hashedPassword = bcrypt.hashSync(password, salt);
 
@@ -106,10 +113,12 @@ app.post("/api/register", async (req, res) => {
 
     res.status(201).json({ success: true, message: "Registration successful" });
   } catch (err) {
+    console.error("Register Error:", err);
     res.status(500).json({ message: "Register error" });
   }
 });
 
+// Login Route
 app.post("/api/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -122,7 +131,7 @@ app.post("/api/login", async (req, res) => {
       return res.status(400).json({ message: "User not found" });
     }
 
-    // Sync compare
+    // Sync compare for stability
     const isMatch = bcrypt.compareSync(password, user.password);
     if (!isMatch) {
       return res.status(400).json({ message: "Invalid credentials" });
@@ -139,6 +148,7 @@ app.post("/api/login", async (req, res) => {
       user: { id: user._id, name: user.name, role: user.role, balance: user.balance }
     });
   } catch (err) {
+    console.error("Login Error:", err);
     res.status(500).json({ message: "Login error" });
   }
 });
@@ -147,7 +157,6 @@ app.post("/api/login", async (req, res) => {
 
 app.get("/api/profile", auth, async (req, res) => {
   try {
-    // req.user.id এখন সঠিকভাবে কাজ করবে
     const user = await User.findById(req.user.id).select("-password");
     if (!user) return res.status(404).json({ message: "User not found" });
     res.json(user);
