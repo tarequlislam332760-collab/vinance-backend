@@ -61,7 +61,6 @@ const auth = (req, res, next) => {
     const token = req.headers.authorization?.split(" ")[1];
     if (!token) return res.status(401).json({ message: "No Token Provided" });
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    // টোকেন থেকে id নিয়ে req.user এ সেট করা হচ্ছে
     req.user = decoded; 
     next();
   } catch (err) { res.status(401).json({ message: "Invalid or Expired Token" }); }
@@ -87,7 +86,6 @@ app.post("/api/login", async (req, res) => {
   const { email, password } = req.body;
   const user = await User.findOne({ email: email.toLowerCase() });
   if (!user || !bcrypt.compareSync(password, user.password)) return res.status(400).json({ message: "Wrong Info" });
-  // টোকেনে id হিসেবে ইউজারের অবজেক্ট আইডি পাঠানো হচ্ছে
   const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
   res.json({ token, user: { _id: user._id, name: user.name, email: user.email, balance: user.balance, role: user.role } });
 });
@@ -200,7 +198,18 @@ app.get("/api/my-futures", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error fetching futures logs" }); }
 });
 
-/* ================= ADMIN PANEL ================= */
+/* ================= ADMIN PANEL & ALL LOGS FIX ================= */
+
+// এটি All Logs পেজের জন্য। এটি সব ইউজারের সব ট্রানজেকশন একসাথে নিয়ে আসবে।
+app.get("/api/admin/all-logs", auth, adminAuth, async (req, res) => {
+  try {
+    const logs = await Transaction.find()
+      .populate("userId", "name email")
+      .sort({ createdAt: -1 });
+    res.json(logs);
+  } catch (err) { res.status(500).json({ message: "Error fetching all logs" }); }
+});
+
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select("-password");
