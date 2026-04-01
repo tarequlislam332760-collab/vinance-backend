@@ -39,13 +39,14 @@ const Investment = mongoose.models.Investment || mongoose.model("Investment", ne
   amount: Number, status: { type: String, default: "active" }
 }, { timestamps: true }));
 
-// --- নতুন ফিউচার ট্রেড মডেল ---
+// --- ফিউচার ট্রেড মডেল (entryPrice সহ আপডেট করা হয়েছে) ---
 const FuturesTrade = mongoose.models.FuturesTrade || mongoose.model("FuturesTrade", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   symbol: String,
   type: { type: String, enum: ["buy", "sell"] },
   amount: Number,
   leverage: Number,
+  entryPrice: Number, // ট্রেড নেওয়ার সময়কার লাইভ প্রাইস
   status: { type: String, default: "open" }
 }, { timestamps: true }));
 
@@ -151,28 +152,32 @@ app.get("/api/my-investments", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error fetching logs" }); }
 });
 
-// --- ৪. নতুন ফিউচার ট্রেড সেকশন ---
+// --- ৪. ফিউচার ট্রেড লজিক (সম্পূর্ণ কানেক্টেড) ---
 app.post("/api/futures/trade", auth, async (req, res) => {
   try {
-    const { amount, type, symbol, leverage } = req.body;
+    const { amount, type, symbol, leverage, entryPrice } = req.body;
     const user = await User.findById(req.user.id);
 
     if (user.balance < Number(amount)) {
       return res.status(400).json({ message: "Insufficient Balance" });
     }
 
+    // ইউজারের মেইন ব্যালেন্স থেকে টাকা কাটা
     user.balance -= Number(amount);
     await user.save();
 
-    await FuturesTrade.create({
+    // ফিউচার ট্রেড রেকর্ড তৈরি
+    const trade = await FuturesTrade.create({
       userId: user._id,
       symbol,
       type, 
       amount: Number(amount),
       leverage: Number(leverage),
+      entryPrice: Number(entryPrice),
       status: "open"
     });
 
+    // ট্রানজাকশন হিস্ট্রিতে অ্যাড করা
     await Transaction.create({ 
       userId: user._id, 
       type: "investment", 
@@ -183,8 +188,9 @@ app.post("/api/futures/trade", auth, async (req, res) => {
 
     res.json({ 
       success: true, 
-      message: `${symbol} Futures Trade Successful!`, 
-      newBalance: user.balance 
+      message: `${symbol} Futures ${type.toUpperCase()} Successful!`, 
+      newBalance: user.balance,
+      trade: trade
     });
   } catch (err) { 
     res.status(500).json({ message: "Futures trade failed" }); 
