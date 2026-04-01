@@ -16,7 +16,7 @@ app.use(cors({
 app.use(express.json());
 
 /* ================= DATABASE ================= */
-mongoose.connect(process.env.MONGO_URI).then(() => console.log("✅ DB Connected"));
+mongoose.connect(process.env.MONGO_URI).then(() => console.log("✅ DB Connected")).catch(err => console.log("❌ DB Error:", err));
 
 /* ================= MODELS ================= */
 const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema({
@@ -29,7 +29,7 @@ const Plan = mongoose.models.Plan || mongoose.model("Plan", new mongoose.Schema(
 
 const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  type: { type: String, enum: ["deposit", "withdraw", "investment", "sell"] },
+  type: { type: String, enum: ["deposit", "withdraw", "investment", "sell", "futures"] }, // futures টাইপ অ্যাড করা হয়েছে
   amount: Number, method: String, transactionId: String, status: { type: String, default: "pending" }
 }, { timestamps: true }));
 
@@ -39,14 +39,14 @@ const Investment = mongoose.models.Investment || mongoose.model("Investment", ne
   amount: Number, status: { type: String, default: "active" }
 }, { timestamps: true }));
 
-// --- ফিউচার ট্রেড মডেল (entryPrice সহ আপডেট করা হয়েছে) ---
+// --- ফিউচার ট্রেড মডেল (ফিক্সড) ---
 const FuturesTrade = mongoose.models.FuturesTrade || mongoose.model("FuturesTrade", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   symbol: String,
   type: { type: String, enum: ["buy", "sell"] },
   amount: Number,
   leverage: Number,
-  entryPrice: Number, // ট্রেড নেওয়ার সময়কার লাইভ প্রাইস
+  entryPrice: Number,
   status: { type: String, default: "open" }
 }, { timestamps: true }));
 
@@ -54,11 +54,11 @@ const FuturesTrade = mongoose.models.FuturesTrade || mongoose.model("FuturesTrad
 const auth = (req, res, next) => {
   try {
     const token = req.headers.authorization?.split(" ")[1];
-    if (!token) return res.status(401).json({ message: "No Token" });
+    if (!token) return res.status(401).json({ message: "No Token Provided" });
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded; 
     next();
-  } catch (err) { res.status(401).json({ message: "Invalid Token" }); }
+  } catch (err) { res.status(401).json({ message: "Invalid or Expired Token" }); }
 };
 
 const adminAuth = (req, res, next) => {
@@ -75,7 +75,7 @@ app.post("/api/register", async (req, res) => {
     const hashedPassword = bcrypt.hashSync(password, 10);
     await User.create({ name, email: email.toLowerCase(), password: hashedPassword });
     res.status(201).json({ success: true });
-  } catch (err) { res.status(500).json({ message: "Failed" }); }
+  } catch (err) { res.status(500).json({ message: "Registration Failed" }); }
 });
 
 app.post("/api/login", async (req, res) => {
@@ -152,48 +152,55 @@ app.get("/api/my-investments", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error fetching logs" }); }
 });
 
-// --- ৪. ফিউচার ট্রেড লজিক (সম্পূর্ণ কানেক্টেড) ---
+// --- ৪. ফিউচার ট্রেড লজিক (Fixing the Errors) ---
 app.post("/api/futures/trade", auth, async (req, res) => {
   try {
     const { amount, type, symbol, leverage, entryPrice } = req.body;
+    
+    // ১. ইউজার খুঁজে বের করা
     const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
 
-    if (user.balance < Number(amount)) {
-      return res.status(400).json({ message: "Insufficient Balance" });
+    // ২. ব্যালেন্স চেক (নাম্বার ফরম্যাটে কনভার্ট করে)
+    const tradeAmount = Number(amount);
+    if (user.balance < tradeAmount) {
+      return res.status(400).json({ message: "Insufficient Balance in your wallet!" });
     }
 
-    // ইউজারের মেইন ব্যালেন্স থেকে টাকা কাটা
-    user.balance -= Number(amount);
+    // ৩. ইউজারের ব্যালেন্স আপডেট
+    user.balance -= tradeAmount;
     await user.save();
 
-    // ফিউচার ট্রেড রেকর্ড তৈরি
+    // ৪. ফিউচার ট্রেড রেকর্ড তৈরি
     const trade = await FuturesTrade.create({
       userId: user._id,
-      symbol,
-      type, 
-      amount: Number(amount),
+      symbol: symbol,
+      type: type, 
+      amount: tradeAmount,
       leverage: Number(leverage),
       entryPrice: Number(entryPrice),
       status: "open"
     });
 
-    // ট্রানজাকশন হিস্ট্রিতে অ্যাড করা
+    // ৫. ট্রানজাকশন হিস্ট্রিতে সেভ করা
     await Transaction.create({ 
       userId: user._id, 
-      type: "investment", 
-      amount: Number(amount), 
+      type: "futures", 
+      amount: tradeAmount, 
       status: "approved", 
-      method: `${symbol} Futures ${leverage}x` 
+      method: `${symbol} ${leverage}x ${type.toUpperCase()}` 
     });
 
     res.json({ 
       success: true, 
-      message: `${symbol} Futures ${type.toUpperCase()} Successful!`, 
+      message: `${symbol} Futures Trade Open Successfully!`, 
       newBalance: user.balance,
       trade: trade
     });
+
   } catch (err) { 
-    res.status(500).json({ message: "Futures trade failed" }); 
+    console.error("Futures Error:", err);
+    res.status(500).json({ message: "Internal Server Error", error: err.message }); 
   }
 });
 
