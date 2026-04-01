@@ -154,6 +154,7 @@ app.get("/api/my-investments", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error fetching logs" }); }
 });
 
+/* ================= FUTURES TRADING ROUTES ================= */
 app.post("/api/futures/trade", auth, async (req, res) => {
   try {
     const { amount, type, symbol, leverage, entryPrice } = req.body;
@@ -200,7 +201,7 @@ app.get("/api/my-futures", auth, async (req, res) => {
 
 /* ================= ADMIN PANEL & ALL LOGS FIX ================= */
 
-// এটি All Logs পেজের জন্য। এটি সব ইউজারের সব ট্রানজেকশন একসাথে নিয়ে আসবে।
+// এটি All Logs পেজের জন্য সব ট্রানজেকশন নিয়ে আসে
 app.get("/api/admin/all-logs", auth, adminAuth, async (req, res) => {
   try {
     const logs = await Transaction.find()
