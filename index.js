@@ -29,17 +29,16 @@ const Plan = mongoose.models.Plan || mongoose.model("Plan", new mongoose.Schema(
 
 const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  type: { type: String, enum: ["deposit", "withdraw", "investment", "sell", "futures"] }, // futures টাইপ অ্যাড করা হয়েছে
+  type: { type: String, enum: ["deposit", "withdraw", "investment", "sell", "futures"] },
   amount: Number, method: String, transactionId: String, status: { type: String, default: "pending" }
 }, { timestamps: true }));
 
-const Investment = mongoose.models.Investment || mongoose.model("Investment", new mongoose.Schema({
+const Investment = mongoose.models.Investment || mongoose.models.Investment || mongoose.model("Investment", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   planId: { type: mongoose.Schema.Types.ObjectId, ref: "Plan" },
   amount: Number, status: { type: String, default: "active" }
 }, { timestamps: true }));
 
-// --- ফিউচার ট্রেড মডেল (ফিক্সড) ---
 const FuturesTrade = mongoose.models.FuturesTrade || mongoose.model("FuturesTrade", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   symbol: String,
@@ -68,7 +67,6 @@ const adminAuth = (req, res, next) => {
 
 /* ================= ROUTES ================= */
 
-// --- ১. ইউজার অ্যাকশনস ---
 app.post("/api/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -91,7 +89,6 @@ app.get("/api/profile", auth, async (req, res) => {
   res.json(user);
 });
 
-// --- ২. ডিপোজিট, উইথড্র ও ট্রানজাকশন ---
 app.post("/api/deposit", auth, async (req, res) => {
   try {
     const { amount, method, transactionId } = req.body;
@@ -115,7 +112,6 @@ app.get("/api/transactions", auth, async (req, res) => {
   res.json(data);
 });
 
-// --- ৩. স্পট ট্রেড ও ইনভেস্টমেন্ট ---
 app.post("/api/trade", auth, async (req, res) => {
   try {
     const { amount, type, symbol } = req.body;
@@ -152,58 +148,40 @@ app.get("/api/my-investments", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error fetching logs" }); }
 });
 
-// --- ৪. ফিউচার ট্রেড লজিক (Fixing the Errors) ---
+// --- ফিউচার ট্রেড লজিক (শুধুমাত্র ফিল্ড ফিক্স করা হয়েছে) ---
 app.post("/api/futures/trade", auth, async (req, res) => {
   try {
     const { amount, type, symbol, leverage, entryPrice } = req.body;
-    
-    // ১. ইউজার খুঁজে বের করা
     const user = await User.findById(req.user.id);
-    if (!user) return res.status(404).json({ message: "User not found" });
 
-    // ২. ব্যালেন্স চেক (নাম্বার ফরম্যাটে কনভার্ট করে)
-    const tradeAmount = Number(amount);
-    if (user.balance < tradeAmount) {
-      return res.status(400).json({ message: "Insufficient Balance in your wallet!" });
-    }
+    if (user.balance < Number(amount)) return res.status(400).json({ message: "Insufficient Balance" });
 
-    // ৩. ইউজারের ব্যালেন্স আপডেট
-    user.balance -= tradeAmount;
+    user.balance -= Number(amount);
     await user.save();
 
-    // ৪. ফিউচার ট্রেড রেকর্ড তৈরি
     const trade = await FuturesTrade.create({
-      userId: user._id,
-      symbol: symbol,
-      type: type, 
-      amount: tradeAmount,
+      userId: user._id, // মডেলে userId আছে তাই এটিই ব্যবহার হবে
+      symbol,
+      type, 
+      amount: Number(amount),
       leverage: Number(leverage),
       entryPrice: Number(entryPrice),
       status: "open"
     });
 
-    // ৫. ট্রানজাকশন হিস্ট্রিতে সেভ করা
     await Transaction.create({ 
       userId: user._id, 
       type: "futures", 
-      amount: tradeAmount, 
+      amount: Number(amount), 
       status: "approved", 
       method: `${symbol} ${leverage}x ${type.toUpperCase()}` 
     });
 
-    res.json({ 
-      success: true, 
-      message: `${symbol} Futures Trade Open Successfully!`, 
-      newBalance: user.balance,
-      trade: trade
-    });
-
-  } catch (err) { 
-    console.error("Futures Error:", err);
-    res.status(500).json({ message: "Internal Server Error", error: err.message }); 
-  }
+    res.json({ success: true, message: "Futures Trade Opened", newBalance: user.balance, trade });
+  } catch (err) { res.status(500).json({ message: "Futures trade failed" }); }
 });
 
+// --- View All এ ক্লিক করলে এই এপিআই ডেটা পাঠাবে ---
 app.get("/api/my-futures", auth, async (req, res) => {
   try {
     const data = await FuturesTrade.find({ userId: req.user.id }).sort({ createdAt: -1 });
@@ -211,7 +189,7 @@ app.get("/api/my-futures", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error fetching futures logs" }); }
 });
 
-// --- ৫. অ্যাডমিন প্যানেল কন্ট্রোল ---
+/* ================= ADMIN PANEL ================= */
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select("-password");
