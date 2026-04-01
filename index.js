@@ -16,11 +16,17 @@ app.use(cors({
 app.use(express.json());
 
 /* ================= DATABASE ================= */
-mongoose.connect(process.env.MONGO_URI).then(() => console.log("✅ DB Connected")).catch(err => console.log("❌ DB Error:", err));
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log("✅ DB Connected"))
+  .catch(err => console.log("❌ DB Error:", err));
 
 /* ================= MODELS ================= */
 const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema({
-  name: String, email: { type: String, unique: true }, password: String, role: { type: String, default: "user" }, balance: { type: Number, default: 0 }
+  name: String, 
+  email: { type: String, unique: true }, 
+  password: String, 
+  role: { type: String, default: "user" }, 
+  balance: { type: Number, default: 0 }
 }));
 
 const Plan = mongoose.models.Plan || mongoose.model("Plan", new mongoose.Schema({
@@ -33,7 +39,7 @@ const Transaction = mongoose.models.Transaction || mongoose.model("Transaction",
   amount: Number, method: String, transactionId: String, status: { type: String, default: "pending" }
 }, { timestamps: true }));
 
-const Investment = mongoose.models.Investment || mongoose.models.Investment || mongoose.model("Investment", new mongoose.Schema({
+const Investment = mongoose.models.Investment || mongoose.model("Investment", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   planId: { type: mongoose.Schema.Types.ObjectId, ref: "Plan" },
   amount: Number, status: { type: String, default: "active" }
@@ -55,6 +61,7 @@ const auth = (req, res, next) => {
     const token = req.headers.authorization?.split(" ")[1];
     if (!token) return res.status(401).json({ message: "No Token Provided" });
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    // টোকেন থেকে id নিয়ে req.user এ সেট করা হচ্ছে
     req.user = decoded; 
     next();
   } catch (err) { res.status(401).json({ message: "Invalid or Expired Token" }); }
@@ -80,8 +87,9 @@ app.post("/api/login", async (req, res) => {
   const { email, password } = req.body;
   const user = await User.findOne({ email: email.toLowerCase() });
   if (!user || !bcrypt.compareSync(password, user.password)) return res.status(400).json({ message: "Wrong Info" });
+  // টোকেনে id হিসেবে ইউজারের অবজেক্ট আইডি পাঠানো হচ্ছে
   const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
-  res.json({ token, user });
+  res.json({ token, user: { _id: user._id, name: user.name, email: user.email, balance: user.balance, role: user.role } });
 });
 
 app.get("/api/profile", auth, async (req, res) => {
@@ -148,24 +156,25 @@ app.get("/api/my-investments", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error fetching logs" }); }
 });
 
-// --- ফিউচার ট্রেড লজিক (শুধুমাত্র ফিল্ড ফিক্স করা হয়েছে) ---
 app.post("/api/futures/trade", auth, async (req, res) => {
   try {
     const { amount, type, symbol, leverage, entryPrice } = req.body;
     const user = await User.findById(req.user.id);
 
-    if (user.balance < Number(amount)) return res.status(400).json({ message: "Insufficient Balance" });
+    if (!user || user.balance < Number(amount)) {
+        return res.status(400).json({ message: "Insufficient Balance" });
+    }
 
     user.balance -= Number(amount);
     await user.save();
 
     const trade = await FuturesTrade.create({
-      userId: user._id, // মডেলে userId আছে তাই এটিই ব্যবহার হবে
-      symbol,
-      type, 
+      userId: user._id,
+      symbol: symbol || "BTCUSDT",
+      type: type, 
       amount: Number(amount),
-      leverage: Number(leverage),
-      entryPrice: Number(entryPrice),
+      leverage: Number(leverage) || 1,
+      entryPrice: Number(entryPrice) || 0,
       status: "open"
     });
 
@@ -178,10 +187,12 @@ app.post("/api/futures/trade", auth, async (req, res) => {
     });
 
     res.json({ success: true, message: "Futures Trade Opened", newBalance: user.balance, trade });
-  } catch (err) { res.status(500).json({ message: "Futures trade failed" }); }
+  } catch (err) { 
+    console.error(err);
+    res.status(500).json({ message: "Futures trade failed" }); 
+  }
 });
 
-// --- View All এ ক্লিক করলে এই এপিআই ডেটা পাঠাবে ---
 app.get("/api/my-futures", auth, async (req, res) => {
   try {
     const data = await FuturesTrade.find({ userId: req.user.id }).sort({ createdAt: -1 });
