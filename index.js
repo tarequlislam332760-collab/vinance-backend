@@ -61,7 +61,6 @@ const auth = (req, res, next) => {
     const token = req.headers.authorization?.split(" ")[1];
     if (!token) return res.status(401).json({ message: "No Token Provided" });
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    // টোকেন থেকে id নিয়ে req.user এ সেট করা হচ্ছে
     req.user = decoded; 
     next();
   } catch (err) { res.status(401).json({ message: "Invalid or Expired Token" }); }
@@ -87,7 +86,6 @@ app.post("/api/login", async (req, res) => {
   const { email, password } = req.body;
   const user = await User.findOne({ email: email.toLowerCase() });
   if (!user || !bcrypt.compareSync(password, user.password)) return res.status(400).json({ message: "Wrong Info" });
-  // টোকেনে id হিসেবে ইউজারের অবজেক্ট আইডি পাঠানো হচ্ছে
   const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
   res.json({ token, user: { _id: user._id, name: user.name, email: user.email, balance: user.balance, role: user.role } });
 });
@@ -200,14 +198,29 @@ app.get("/api/my-futures", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error fetching futures logs" }); }
 });
 
-/* ================= ADMIN PANEL ================= */
+/* ================= ADMIN PANEL (FIXED LOGS) ================= */
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
+    // ১. সব ইউজারদের তথ্য ফেচ করা
     const users = await User.find().select("-password");
-    const requests = await Transaction.find().populate("userId", "name email").sort({ createdAt: -1 });
-    const investments = await Investment.find().populate("userId", "name email").populate("planId", "name");
+
+    // ২. সব ট্রানজ্যাকশন (Deposit/Withdraw) এবং সাথে ইউজারের নাম/ইমেইল
+    const requests = await Transaction.find()
+      .populate("userId", "name email")
+      .sort({ createdAt: -1 });
+
+    // ৩. ইনভেস্টমেন্ট লগ্স (এখানে populate ঠিক করা হয়েছে যাতে নাম এবং লাভ শতাংশ ঠিকমতো দেখা যায়)
+    const investments = await Investment.find()
+      .populate("userId", "name email")
+      .populate("planId", "name profitPercent")
+      .sort({ createdAt: -1 });
+
+    // ৪. রেসপন্স পাঠানো
     res.json({ users, requests, investments });
-  } catch (err) { res.status(500).json({ message: "Error fetching admin data" }); }
+  } catch (err) { 
+    console.error("Admin data fetch error:", err);
+    res.status(500).json({ message: "Error fetching admin data" }); 
+  }
 });
 
 app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
