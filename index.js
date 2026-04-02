@@ -198,34 +198,28 @@ app.get("/api/my-futures", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error fetching futures logs" }); }
 });
 
-/* ================= ADMIN PANEL (ENHANCED DATA FETCH) ================= */
+/* ================= ADMIN PANEL (FIXED LOGS) ================= */
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
+    // ১. সব ইউজারদের তথ্য ফেচ করা
     const users = await User.find().select("-password");
 
+    // ২. সব ট্রানজ্যাকশন (Deposit/Withdraw) এবং সাথে ইউজারের নাম/ইমেইল
     const requests = await Transaction.find()
       .populate("userId", "name email")
       .sort({ createdAt: -1 });
 
+    // ৩. ইনভেস্টমেন্ট লগ্স (এখানে populate ঠিক করা হয়েছে যাতে নাম এবং লাভ শতাংশ ঠিকমতো দেখা যায়)
     const investments = await Investment.find()
       .populate("userId", "name email")
       .populate("planId", "name profitPercent")
       .sort({ createdAt: -1 });
 
-    // ✅ Empty array handling for safety
-    res.json({ 
-      users: users || [], 
-      requests: requests || [], 
-      investments: investments || [] 
-    });
+    // ৪. রেসপন্স পাঠানো
+    res.json({ users, requests, investments });
   } catch (err) { 
     console.error("Admin data fetch error:", err);
-    res.status(500).json({ 
-      message: "Error fetching admin data",
-      users: [],
-      requests: [],
-      investments: []
-    }); 
+    res.status(500).json({ message: "Error fetching admin data" }); 
   }
 });
 
