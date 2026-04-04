@@ -35,7 +35,7 @@ const Plan = mongoose.models.Plan || mongoose.model("Plan", new mongoose.Schema(
 
 const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  type: { type: String, enum: ["deposit", "withdraw", "investment", "sell", "futures"] },
+  type: { type: String, enum: ["deposit", "withdraw", "investment", "sell", "futures", "copy_trade"] },
   amount: Number, method: String, transactionId: String, status: { type: String, default: "pending" }
 }, { timestamps: true }));
 
@@ -53,6 +53,23 @@ const FuturesTrade = mongoose.models.FuturesTrade || mongoose.model("FuturesTrad
   leverage: Number,
   entryPrice: Number,
   status: { type: String, default: "open" }
+}, { timestamps: true }));
+
+/* --- NEW: Trader & CopyTrade Models --- */
+const Trader = mongoose.models.Trader || mongoose.model("Trader", new mongoose.Schema({
+  name: String,
+  image: String,
+  profit: Number, // e.g. 85.5 (percent)
+  followers: { type: Number, default: 0 },
+  winRate: { type: Number, default: 90 },
+  status: { type: Boolean, default: true }
+}, { timestamps: true }));
+
+const CopyTrade = mongoose.models.CopyTrade || mongoose.model("CopyTrade", new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  traderId: { type: mongoose.Schema.Types.ObjectId, ref: "Trader" },
+  amount: Number,
+  status: { type: String, default: "active" }
 }, { timestamps: true }));
 
 /* ================= AUTH MIDDLEWARE ================= */
@@ -198,25 +215,61 @@ app.get("/api/my-futures", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error fetching futures logs" }); }
 });
 
-/* ================= ADMIN PANEL (FIXED LOGS) ================= */
+/* --- NEW: Copy Trade Routes --- */
+
+// সব ট্রেডারদের লিস্ট দেখা
+app.get("/api/traders", async (req, res) => {
+  try {
+    const traders = await Trader.find({ status: true });
+    res.json(traders);
+  } catch (err) { res.status(500).json({ message: "Error fetching traders" }); }
+});
+
+// কপি ট্রেড শুরু করা
+app.post("/api/copy-trade/follow", auth, async (req, res) => {
+  try {
+    const { traderId, amount } = req.body;
+    const user = await User.findById(req.user.id);
+
+    if (user.balance < Number(amount)) return res.status(400).json({ message: "Insufficient Balance" });
+
+    user.balance -= Number(amount);
+    await user.save();
+
+    await CopyTrade.create({ userId: user._id, traderId, amount: Number(amount) });
+    await Trader.findByIdAndUpdate(traderId, { $inc: { followers: 1 } });
+    
+    await Transaction.create({ 
+      userId: user._id, 
+      type: "copy_trade", 
+      amount: Number(amount), 
+      status: "approved", 
+      method: "Trader Copy" 
+    });
+
+    res.json({ success: true, message: "Copy Trade Started!", newBalance: user.balance });
+  } catch (err) { res.status(500).json({ message: "Copy trade failed" }); }
+});
+
+/* ================= ADMIN PANEL ================= */
+
+// অ্যাডমিন নতুন ট্রেডার তৈরি করবে
+app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
+  try {
+    const { name, image, profit, winRate } = req.body;
+    await Trader.create({ name, image, profit, winRate });
+    res.json({ success: true, message: "Trader Created Successfully" });
+  } catch (err) { res.status(500).json({ message: "Failed to create trader" }); }
+});
+
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
-    // ১. সব ইউজারদের তথ্য ফেচ করা
     const users = await User.find().select("-password");
-
-    // ২. সব ট্রানজ্যাকশন (Deposit/Withdraw) এবং সাথে ইউজারের নাম/ইমেইল
-    const requests = await Transaction.find()
-      .populate("userId", "name email")
-      .sort({ createdAt: -1 });
-
-    // ৩. ইনভেস্টমেন্ট লগ্স (এখানে populate ঠিক করা হয়েছে যাতে নাম এবং লাভ শতাংশ ঠিকমতো দেখা যায়)
-    const investments = await Investment.find()
-      .populate("userId", "name email")
-      .populate("planId", "name profitPercent")
-      .sort({ createdAt: -1 });
-
-    // ৪. রেসপন্স পাঠানো
-    res.json({ users, requests, investments });
+    const requests = await Transaction.find().populate("userId", "name email").sort({ createdAt: -1 });
+    const investments = await Investment.find().populate("userId", "name email").populate("planId", "name profitPercent").sort({ createdAt: -1 });
+    const traders = await Trader.find(); // ট্রেডারদের ডেটাও অ্যাডমিন দেখতে পারবে
+    
+    res.json({ users, requests, investments, traders });
   } catch (err) { 
     console.error("Admin data fetch error:", err);
     res.status(500).json({ message: "Error fetching admin data" }); 
