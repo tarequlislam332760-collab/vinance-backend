@@ -55,11 +55,11 @@ const FuturesTrade = mongoose.models.FuturesTrade || mongoose.model("FuturesTrad
   status: { type: String, default: "open" }
 }, { timestamps: true }));
 
-/* --- NEW: Trader & CopyTrade Models --- */
+/* --- Trader & CopyTrade Models --- */
 const Trader = mongoose.models.Trader || mongoose.model("Trader", new mongoose.Schema({
   name: String,
   image: String,
-  profit: Number, // e.g. 85.5 (percent)
+  profit: Number, 
   followers: { type: Number, default: 0 },
   winRate: { type: Number, default: 90 },
   status: { type: Boolean, default: true }
@@ -215,17 +215,16 @@ app.get("/api/my-futures", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error fetching futures logs" }); }
 });
 
-/* --- NEW: Copy Trade Routes --- */
+/* --- Copy Trade Routes --- */
 
-// সব ট্রেডারদের লিস্ট দেখা
 app.get("/api/traders", async (req, res) => {
   try {
-    const traders = await Trader.find({ status: true });
+    // এখানে status চেক সরিয়ে দেওয়া হয়েছে যাতে ডাটাবেসে status না থাকলেও ডাটা শো করে
+    const traders = await Trader.find(); 
     res.json(traders);
   } catch (err) { res.status(500).json({ message: "Error fetching traders" }); }
 });
 
-// কপি ট্রেড শুরু করা
 app.post("/api/copy-trade/follow", auth, async (req, res) => {
   try {
     const { traderId, amount } = req.body;
@@ -253,7 +252,6 @@ app.post("/api/copy-trade/follow", auth, async (req, res) => {
 
 /* ================= ADMIN PANEL ================= */
 
-// অ্যাডমিন নতুন ট্রেডার তৈরি করবে
 app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
   try {
     const { name, image, profit, winRate } = req.body;
@@ -267,7 +265,7 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
     const users = await User.find().select("-password");
     const requests = await Transaction.find().populate("userId", "name email").sort({ createdAt: -1 });
     const investments = await Investment.find().populate("userId", "name email").populate("planId", "name profitPercent").sort({ createdAt: -1 });
-    const traders = await Trader.find(); // ট্রেডারদের ডেটাও অ্যাডমিন দেখতে পারবে
+    const traders = await Trader.find(); 
     
     res.json({ users, requests, investments, traders });
   } catch (err) { 
