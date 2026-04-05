@@ -207,9 +207,9 @@ app.get("/api/my-futures", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error fetching futures logs" }); }
 });
 
-/* --- Copy Trade Routes --- */
+/* --- Copy Trade Routes Updated --- */
 
-app.get("/api/traders", async (req, res) => {
+app.get("/api/traders/all", async (req, res) => {
   try {
     const traders = await Trader.find(); 
     res.json(traders);
