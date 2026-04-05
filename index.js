@@ -55,7 +55,6 @@ const FuturesTrade = mongoose.models.FuturesTrade || mongoose.model("FuturesTrad
   status: { type: String, default: "open" }
 }, { timestamps: true }));
 
-/* --- Trader & CopyTrade Models --- */
 const Trader = mongoose.models.Trader || mongoose.model("Trader", new mongoose.Schema({
   name: String,
   image: String,
@@ -175,14 +174,9 @@ app.post("/api/futures/trade", auth, async (req, res) => {
   try {
     const { amount, type, symbol, leverage, entryPrice } = req.body;
     const user = await User.findById(req.user.id);
-
-    if (!user || user.balance < Number(amount)) {
-        return res.status(400).json({ message: "Insufficient Balance" });
-    }
-
+    if (!user || user.balance < Number(amount)) return res.status(400).json({ message: "Insufficient Balance" });
     user.balance -= Number(amount);
     await user.save();
-
     const trade = await FuturesTrade.create({
       userId: user._id,
       symbol: symbol || "BTCUSDT",
@@ -192,7 +186,6 @@ app.post("/api/futures/trade", auth, async (req, res) => {
       entryPrice: Number(entryPrice) || 0,
       status: "open"
     });
-
     await Transaction.create({ 
       userId: user._id, 
       type: "futures", 
@@ -200,7 +193,6 @@ app.post("/api/futures/trade", auth, async (req, res) => {
       status: "approved", 
       method: `${symbol} ${leverage}x ${type.toUpperCase()}` 
     });
-
     res.json({ success: true, message: "Futures Trade Opened", newBalance: user.balance, trade });
   } catch (err) { 
     console.error(err);
@@ -219,7 +211,6 @@ app.get("/api/my-futures", auth, async (req, res) => {
 
 app.get("/api/traders", async (req, res) => {
   try {
-    // এখানে status চেক সরিয়ে দেওয়া হয়েছে যাতে ডাটাবেসে status না থাকলেও ডাটা শো করে
     const traders = await Trader.find(); 
     res.json(traders);
   } catch (err) { res.status(500).json({ message: "Error fetching traders" }); }
@@ -229,15 +220,11 @@ app.post("/api/copy-trade/follow", auth, async (req, res) => {
   try {
     const { traderId, amount } = req.body;
     const user = await User.findById(req.user.id);
-
     if (user.balance < Number(amount)) return res.status(400).json({ message: "Insufficient Balance" });
-
     user.balance -= Number(amount);
     await user.save();
-
     await CopyTrade.create({ userId: user._id, traderId, amount: Number(amount) });
     await Trader.findByIdAndUpdate(traderId, { $inc: { followers: 1 } });
-    
     await Transaction.create({ 
       userId: user._id, 
       type: "copy_trade", 
@@ -245,7 +232,6 @@ app.post("/api/copy-trade/follow", auth, async (req, res) => {
       status: "approved", 
       method: "Trader Copy" 
     });
-
     res.json({ success: true, message: "Copy Trade Started!", newBalance: user.balance });
   } catch (err) { res.status(500).json({ message: "Copy trade failed" }); }
 });
@@ -266,7 +252,6 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
     const requests = await Transaction.find().populate("userId", "name email").sort({ createdAt: -1 });
     const investments = await Investment.find().populate("userId", "name email").populate("planId", "name profitPercent").sort({ createdAt: -1 });
     const traders = await Trader.find(); 
-    
     res.json({ users, requests, investments, traders });
   } catch (err) { 
     console.error("Admin data fetch error:", err);
@@ -279,10 +264,8 @@ app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
     const { id, status } = req.body; 
     const transaction = await Transaction.findById(id);
     if (!transaction) return res.status(404).json({ message: "Transaction not found" });
-
     transaction.status = status;
     await transaction.save();
-
     if (status === "approved" && transaction.type === "deposit") {
       await User.findByIdAndUpdate(transaction.userId, { $inc: { balance: transaction.amount } });
     }
