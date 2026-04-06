@@ -55,12 +55,16 @@ const FuturesTrade = mongoose.models.FuturesTrade || mongoose.model("FuturesTrad
   status: { type: String, default: "open" }
 }, { timestamps: true }));
 
+// ✅ FIXED: Added missing dashboard fields to Trader Model
 const Trader = mongoose.models.Trader || mongoose.model("Trader", new mongoose.Schema({
   name: String,
   image: String,
-  profit: Number, 
+  profit: { type: Number, default: 0 }, 
   followers: { type: Number, default: 0 },
   winRate: { type: Number, default: 90 },
+  aum: { type: Number, default: 0 },          // Assets Under Management
+  mdd: { type: Number, default: 0 },          // Max Drawdown
+  chartData: { type: [Number], default: [] }, // Graph Data Array
   status: { type: Boolean, default: true }
 }, { timestamps: true }));
 
@@ -98,12 +102,22 @@ app.post("/api/register", async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Registration Failed" }); }
 });
 
+// ✅ FIXED: Enhanced login response for frontend stability
 app.post("/api/login", async (req, res) => {
-  const { email, password } = req.body;
-  const user = await User.findOne({ email: email.toLowerCase() });
-  if (!user || !bcrypt.compareSync(password, user.password)) return res.status(400).json({ message: "Wrong Info" });
-  const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
-  res.json({ token, user: { _id: user._id, name: user.name, email: user.email, balance: user.balance, role: user.role } });
+  try {
+    const { email, password } = req.body;
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user || !bcrypt.compareSync(password, user.password)) {
+      return res.status(400).json({ message: "Wrong Info" });
+    }
+    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
+    res.json({ 
+      token, 
+      user: { _id: user._id, name: user.name, email: user.email, balance: user.balance, role: user.role } 
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Internal Server Error during login" });
+  }
 });
 
 app.get("/api/profile", auth, async (req, res) => {
@@ -111,6 +125,7 @@ app.get("/api/profile", auth, async (req, res) => {
   res.json(user);
 });
 
+// ... [Existing Deposit, Withdraw, Trade, Invest Routes remain unchanged] ...
 app.post("/api/deposit", auth, async (req, res) => {
   try {
     const { amount, method, transactionId } = req.body;
@@ -207,11 +222,10 @@ app.get("/api/my-futures", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error fetching futures logs" }); }
 });
 
-/* --- Copy Trade Routes Updated --- */
-
+/* --- Copy Trade Routes --- */
 app.get("/api/traders/all", async (req, res) => {
   try {
-    const traders = await Trader.find(); 
+    const traders = await Trader.find({ status: true }); 
     res.json(traders);
   } catch (err) { res.status(500).json({ message: "Error fetching traders" }); }
 });
@@ -237,11 +251,11 @@ app.post("/api/copy-trade/follow", auth, async (req, res) => {
 });
 
 /* ================= ADMIN PANEL ================= */
-
+// ✅ FIXED: Admin can now save AUM, MDD, and ChartData
 app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
   try {
-    const { name, image, profit, winRate } = req.body;
-    await Trader.create({ name, image, profit, winRate });
+    const { name, image, profit, winRate, aum, mdd, chartData } = req.body;
+    await Trader.create({ name, image, profit, winRate, aum, mdd, chartData });
     res.json({ success: true, message: "Trader Created Successfully" });
   } catch (err) { res.status(500).json({ message: "Failed to create trader" }); }
 });
