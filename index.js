@@ -55,16 +55,12 @@ const FuturesTrade = mongoose.models.FuturesTrade || mongoose.model("FuturesTrad
   status: { type: String, default: "open" }
 }, { timestamps: true }));
 
-// Trader Schema updated for Profile Numbers & Graphs
 const Trader = mongoose.models.Trader || mongoose.model("Trader", new mongoose.Schema({
   name: String,
   image: String,
-  profit: { type: Number, default: 0 }, 
+  profit: Number, 
   followers: { type: Number, default: 0 },
   winRate: { type: Number, default: 90 },
-  aum: { type: Number, default: 0 },          // Added for Profile
-  mdd: { type: Number, default: 0 },          // Added for Profile
-  chartData: { type: [Number], default: [] }, // Added for Real Graph
   status: { type: Boolean, default: true }
 }, { timestamps: true }));
 
@@ -215,7 +211,7 @@ app.get("/api/my-futures", auth, async (req, res) => {
 
 app.get("/api/traders/all", async (req, res) => {
   try {
-    const traders = await Trader.find({ status: true }); 
+    const traders = await Trader.find(); 
     res.json(traders);
   } catch (err) { res.status(500).json({ message: "Error fetching traders" }); }
 });
@@ -244,16 +240,8 @@ app.post("/api/copy-trade/follow", auth, async (req, res) => {
 
 app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
   try {
-    const { name, image, profit, winRate, aum, mdd, chartData } = req.body;
-    await Trader.create({ 
-      name, 
-      image, 
-      profit: Number(profit), 
-      winRate: Number(winRate),
-      aum: Number(aum || 0),
-      mdd: Number(mdd || 0),
-      chartData: chartData || [] 
-    });
+    const { name, image, profit, winRate } = req.body;
+    await Trader.create({ name, image, profit, winRate });
     res.json({ success: true, message: "Trader Created Successfully" });
   } catch (err) { res.status(500).json({ message: "Failed to create trader" }); }
 });
