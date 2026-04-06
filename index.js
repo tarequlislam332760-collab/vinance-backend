@@ -61,8 +61,8 @@ const Trader = mongoose.models.Trader || mongoose.model("Trader", new mongoose.S
   profit: { type: Number, default: 0 }, 
   followers: { type: Number, default: 0 },
   winRate: { type: Number, default: 90 },
-  aum: { type: Number, default: 0 },          
-  mdd: { type: Number, default: 0 },          
+  aum: { type: Number, default: 0 },           
+  mdd: { type: Number, default: 0 },           
   chartData: { type: [Number], default: [] }, 
   status: { type: Boolean, default: true }
 }, { timestamps: true }));
@@ -96,7 +96,8 @@ app.post("/api/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
     const hashedPassword = bcrypt.hashSync(password, 10);
-    await User.create({ name, email: email.toLowerCase(), password: hashedPassword });
+    // trim() দিয়ে ইমেইলের বাড়তি স্পেস মুছে ফেলা হয়েছে
+    await User.create({ name, email: email.toLowerCase().trim(), password: hashedPassword });
     res.status(201).json({ success: true });
   } catch (err) { res.status(500).json({ message: "Registration Failed" }); }
 });
@@ -104,16 +105,29 @@ app.post("/api/register", async (req, res) => {
 app.post("/api/login", async (req, res) => {
   try {
     const { email, password } = req.body;
-    const user = await User.findOne({ email: email.toLowerCase() });
-    if (!user || !bcrypt.compareSync(password, user.password)) {
+    if (!email || !password) return res.status(400).json({ message: "Missing Fields" });
+
+    const user = await User.findOne({ email: email.toLowerCase().trim() });
+    
+    if (!user) {
+      console.log("Login Error: User not found ->", email);
       return res.status(400).json({ message: "Wrong Info" });
     }
+
+    const isMatch = bcrypt.compareSync(password, user.password);
+    if (!isMatch) {
+      console.log("Login Error: Password mismatch ->", email);
+      return res.status(400).json({ message: "Wrong Info" });
+    }
+
     const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
+    
     res.json({ 
       token, 
       user: { _id: user._id, name: user.name, email: user.email, balance: user.balance, role: user.role } 
     });
   } catch (err) {
+    console.error("Login Server Error:", err);
     res.status(500).json({ message: "Internal Server Error during login" });
   }
 });
@@ -123,7 +137,6 @@ app.get("/api/profile", auth, async (req, res) => {
   res.json(user);
 });
 
-// ✅ ADDED: Profile Update API - ইউজার প্রোফাইলের সব কিছু কাজ করার জন্য
 app.put("/api/profile/update", auth, async (req, res) => {
   try {
     const { name, password } = req.body;
