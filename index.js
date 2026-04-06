@@ -63,11 +63,11 @@ const Trader = mongoose.models.Trader || mongoose.model("Trader", new mongoose.S
   winRate: { type: Number, default: 90 },
   aum: { type: Number, default: 0 },          
   mdd: { type: Number, default: 0 },          
-  chartData: { type: [Number], default: [] }, // Array of numbers for Graph
+  chartData: { type: [Number], default: [] }, 
   status: { type: Boolean, default: true }
 }, { timestamps: true }));
 
-const CopyTradeModel = mongoose.models.CopyTrade || mongoose.model("CopyTrade", new mongoose.Schema({
+const CopyTrade = mongoose.models.CopyTrade || mongoose.model("CopyTrade", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   traderId: { type: mongoose.Schema.Types.ObjectId, ref: "Trader" },
   amount: Number,
@@ -123,6 +123,7 @@ app.get("/api/profile", auth, async (req, res) => {
   res.json(user);
 });
 
+// ✅ ADDED: Profile Update API - ইউজার প্রোফাইলের সব কিছু কাজ করার জন্য
 app.put("/api/profile/update", auth, async (req, res) => {
   try {
     const { name, password } = req.body;
@@ -160,12 +161,83 @@ app.get("/api/transactions", auth, async (req, res) => {
   res.json(data);
 });
 
-/* --- Copy Trade / Traders Public Routes --- */
-
-// ✅ SYNCED: এটি এখন CopyTrade.jsx এর API_URL এর সাথে মিলবে
-app.get("/api/traders", async (req, res) => {
+app.post("/api/trade", auth, async (req, res) => {
   try {
-    const traders = await Trader.find({ status: true }).sort({ createdAt: -1 }); 
+    const { amount, type, symbol } = req.body;
+    const user = await User.findById(req.user.id);
+    if (type === 'buy') {
+      if (user.balance < amount) return res.status(400).json({ message: "Insufficient Balance" });
+      user.balance -= amount;
+    } else if (type === 'sell') {
+      user.balance += amount; 
+    }
+    await user.save();
+    await Transaction.create({ userId: user._id, type: type === 'buy' ? 'investment' : 'sell', amount, status: "approved", method: symbol });
+    res.json({ success: true, message: "Trade Successful", newBalance: user.balance });
+  } catch (err) { res.status(500).json({ message: "Trade failed" }); }
+});
+
+app.post("/api/invest", auth, async (req, res) => {
+  try {
+    const { planId, amount } = req.body;
+    const user = await User.findById(req.user.id);
+    if (user.balance < Number(amount)) return res.status(400).json({ message: "Low Balance" });
+    user.balance -= Number(amount);
+    await user.save();
+    await Investment.create({ userId: user._id, planId, amount: Number(amount) });
+    await Transaction.create({ userId: user._id, type: "investment", amount: Number(amount), status: "approved" });
+    res.json({ success: true, message: "Investment Successful" });
+  } catch (err) { res.status(500).json({ message: "Investment failed" }); }
+});
+
+app.get("/api/my-investments", auth, async (req, res) => {
+  try {
+    const data = await Investment.find({ userId: req.user.id }).populate("planId");
+    res.json(data);
+  } catch (err) { res.status(500).json({ message: "Error fetching logs" }); }
+});
+
+app.post("/api/futures/trade", auth, async (req, res) => {
+  try {
+    const { amount, type, symbol, leverage, entryPrice } = req.body;
+    const user = await User.findById(req.user.id);
+    if (!user || user.balance < Number(amount)) return res.status(400).json({ message: "Insufficient Balance" });
+    user.balance -= Number(amount);
+    await user.save();
+    const trade = await FuturesTrade.create({
+      userId: user._id,
+      symbol: symbol || "BTCUSDT",
+      type: type, 
+      amount: Number(amount),
+      leverage: Number(leverage) || 1,
+      entryPrice: Number(entryPrice) || 0,
+      status: "open"
+    });
+    await Transaction.create({ 
+      userId: user._id, 
+      type: "futures", 
+      amount: Number(amount), 
+      status: "approved", 
+      method: `${symbol} ${leverage}x ${type.toUpperCase()}` 
+    });
+    res.json({ success: true, message: "Futures Trade Opened", newBalance: user.balance, trade });
+  } catch (err) { 
+    console.error(err);
+    res.status(500).json({ message: "Futures trade failed" }); 
+  }
+});
+
+app.get("/api/my-futures", auth, async (req, res) => {
+  try {
+    const data = await FuturesTrade.find({ userId: req.user.id }).sort({ createdAt: -1 });
+    res.json(data);
+  } catch (err) { res.status(500).json({ message: "Error fetching futures logs" }); }
+});
+
+/* --- Copy Trade Routes --- */
+app.get("/api/traders/all", async (req, res) => {
+  try {
+    const traders = await Trader.find({ status: true }); 
     res.json(traders);
   } catch (err) { res.status(500).json({ message: "Error fetching traders" }); }
 });
@@ -177,7 +249,7 @@ app.post("/api/copy-trade/follow", auth, async (req, res) => {
     if (user.balance < Number(amount)) return res.status(400).json({ message: "Insufficient Balance" });
     user.balance -= Number(amount);
     await user.save();
-    await CopyTradeModel.create({ userId: user._id, traderId, amount: Number(amount) });
+    await CopyTrade.create({ userId: user._id, traderId, amount: Number(amount) });
     await Trader.findByIdAndUpdate(traderId, { $inc: { followers: 1 } });
     await Transaction.create({ 
       userId: user._id, 
@@ -191,32 +263,14 @@ app.post("/api/copy-trade/follow", auth, async (req, res) => {
 });
 
 /* ================= ADMIN PANEL ================= */
-
-// ✅ FIXED: এটি এখন AddTrader.jsx থেকে আসা chartData কে সঠিকভাবে অ্যারে হিসেবে সেভ করবে
 app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
   try {
     const { name, image, profit, winRate, aum, mdd, chartData } = req.body;
-    
-    // যদি ফ্রন্টএন্ড থেকে chartData কমা-সেপারেটেড স্ট্রিং হিসেবে আসে, তবে সেটিকে অ্যারে করা হবে
-    let processedChartData = chartData;
-    if (typeof chartData === 'string') {
-      processedChartData = chartData.split(',').map(Number);
-    }
-
-    await Trader.create({ 
-      name, 
-      image, 
-      profit: Number(profit), 
-      winRate: Number(winRate), 
-      aum: Number(aum), 
-      mdd: Number(mdd), 
-      chartData: processedChartData 
-    });
+    await Trader.create({ name, image, profit, winRate, aum, mdd, chartData });
     res.json({ success: true, message: "Trader Created Successfully" });
   } catch (err) { res.status(500).json({ message: "Failed to create trader" }); }
 });
 
-// বাকি এডমিন রুটগুলো আপনার আগের মতোই রাখা হয়েছে...
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select("-password");
