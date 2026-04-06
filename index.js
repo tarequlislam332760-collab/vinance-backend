@@ -96,7 +96,6 @@ app.post("/api/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
     const hashedPassword = bcrypt.hashSync(password, 10);
-    // trim() দিয়ে ইমেইলের বাড়তি স্পেস মুছে ফেলা হয়েছে
     await User.create({ name, email: email.toLowerCase().trim(), password: hashedPassword });
     res.status(201).json({ success: true });
   } catch (err) { res.status(500).json({ message: "Registration Failed" }); }
@@ -106,30 +105,13 @@ app.post("/api/login", async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ message: "Missing Fields" });
-
     const user = await User.findOne({ email: email.toLowerCase().trim() });
-    
-    if (!user) {
-      console.log("Login Error: User not found ->", email);
-      return res.status(400).json({ message: "Wrong Info" });
-    }
-
+    if (!user) return res.status(400).json({ message: "Wrong Info" });
     const isMatch = bcrypt.compareSync(password, user.password);
-    if (!isMatch) {
-      console.log("Login Error: Password mismatch ->", email);
-      return res.status(400).json({ message: "Wrong Info" });
-    }
-
+    if (!isMatch) return res.status(400).json({ message: "Wrong Info" });
     const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
-    
-    res.json({ 
-      token, 
-      user: { _id: user._id, name: user.name, email: user.email, balance: user.balance, role: user.role } 
-    });
-  } catch (err) {
-    console.error("Login Server Error:", err);
-    res.status(500).json({ message: "Internal Server Error during login" });
-  }
+    res.json({ token, user: { _id: user._id, name: user.name, email: user.email, balance: user.balance, role: user.role } });
+  } catch (err) { res.status(500).json({ message: "Internal Server Error" }); }
 });
 
 app.get("/api/profile", auth, async (req, res) => {
@@ -143,12 +125,9 @@ app.put("/api/profile/update", auth, async (req, res) => {
     const updateData = {};
     if (name) updateData.name = name;
     if (password) updateData.password = bcrypt.hashSync(password, 10);
-
     const updatedUser = await User.findByIdAndUpdate(req.user.id, updateData, { new: true }).select("-password");
     res.json({ success: true, message: "Profile Updated", user: updatedUser });
-  } catch (err) {
-    res.status(500).json({ message: "Update failed" });
-  }
+  } catch (err) { res.status(500).json({ message: "Update failed" }); }
 });
 
 app.post("/api/deposit", auth, async (req, res) => {
@@ -181,9 +160,7 @@ app.post("/api/trade", auth, async (req, res) => {
     if (type === 'buy') {
       if (user.balance < amount) return res.status(400).json({ message: "Insufficient Balance" });
       user.balance -= amount;
-    } else if (type === 'sell') {
-      user.balance += amount; 
-    }
+    } else if (type === 'sell') { user.balance += amount; }
     await user.save();
     await Transaction.create({ userId: user._id, type: type === 'buy' ? 'investment' : 'sell', amount, status: "approved", method: symbol });
     res.json({ success: true, message: "Trade Successful", newBalance: user.balance });
@@ -218,41 +195,22 @@ app.post("/api/futures/trade", auth, async (req, res) => {
     user.balance -= Number(amount);
     await user.save();
     const trade = await FuturesTrade.create({
-      userId: user._id,
-      symbol: symbol || "BTCUSDT",
-      type: type, 
-      amount: Number(amount),
-      leverage: Number(leverage) || 1,
-      entryPrice: Number(entryPrice) || 0,
-      status: "open"
+      userId: user._id, symbol: symbol || "BTCUSDT", type, amount: Number(amount), leverage: Number(leverage) || 1, entryPrice: Number(entryPrice) || 0, status: "open"
     });
-    await Transaction.create({ 
-      userId: user._id, 
-      type: "futures", 
-      amount: Number(amount), 
-      status: "approved", 
-      method: `${symbol} ${leverage}x ${type.toUpperCase()}` 
-    });
+    await Transaction.create({ userId: user._id, type: "futures", amount: Number(amount), status: "approved", method: `${symbol} ${leverage}x ${type.toUpperCase()}` });
     res.json({ success: true, message: "Futures Trade Opened", newBalance: user.balance, trade });
-  } catch (err) { 
-    console.error(err);
-    res.status(500).json({ message: "Futures trade failed" }); 
-  }
+  } catch (err) { res.status(500).json({ message: "Futures trade failed" }); }
 });
 
 app.get("/api/my-futures", auth, async (req, res) => {
-  try {
-    const data = await FuturesTrade.find({ userId: req.user.id }).sort({ createdAt: -1 });
-    res.json(data);
-  } catch (err) { res.status(500).json({ message: "Error fetching futures logs" }); }
+  const data = await FuturesTrade.find({ userId: req.user.id }).sort({ createdAt: -1 });
+  res.json(data);
 });
 
 /* --- Copy Trade Routes --- */
 app.get("/api/traders/all", async (req, res) => {
-  try {
-    const traders = await Trader.find({ status: true }); 
-    res.json(traders);
-  } catch (err) { res.status(500).json({ message: "Error fetching traders" }); }
+  const traders = await Trader.find({ status: true }); 
+  res.json(traders);
 });
 
 app.post("/api/copy-trade/follow", auth, async (req, res) => {
@@ -264,18 +222,14 @@ app.post("/api/copy-trade/follow", auth, async (req, res) => {
     await user.save();
     await CopyTrade.create({ userId: user._id, traderId, amount: Number(amount) });
     await Trader.findByIdAndUpdate(traderId, { $inc: { followers: 1 } });
-    await Transaction.create({ 
-      userId: user._id, 
-      type: "copy_trade", 
-      amount: Number(amount), 
-      status: "approved", 
-      method: "Trader Copy" 
-    });
+    await Transaction.create({ userId: user._id, type: "copy_trade", amount: Number(amount), status: "approved", method: "Trader Copy" });
     res.json({ success: true, message: "Copy Trade Started!", newBalance: user.balance });
   } catch (err) { res.status(500).json({ message: "Copy trade failed" }); }
 });
 
 /* ================= ADMIN PANEL ================= */
+
+// --- Trader Management (Create, Edit, Delete) ---
 app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
   try {
     const { name, image, profit, winRate, aum, mdd, chartData } = req.body;
@@ -284,6 +238,21 @@ app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Failed to create trader" }); }
 });
 
+app.put("/api/admin/edit-trader/:id", auth, adminAuth, async (req, res) => {
+  try {
+    const updatedTrader = await Trader.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    res.json({ success: true, trader: updatedTrader });
+  } catch (err) { res.status(500).json({ message: "Edit failed" }); }
+});
+
+app.delete("/api/admin/delete-trader/:id", auth, adminAuth, async (req, res) => {
+  try {
+    await Trader.findByIdAndDelete(req.params.id);
+    res.json({ success: true, message: "Trader Deleted" });
+  } catch (err) { res.status(500).json({ message: "Delete failed" }); }
+});
+
+// --- User Management (Get All, Update, Delete) ---
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select("-password");
@@ -291,12 +260,25 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
     const investments = await Investment.find().populate("userId", "name email").populate("planId", "name profitPercent").sort({ createdAt: -1 });
     const traders = await Trader.find(); 
     res.json({ users, requests, investments, traders });
-  } catch (err) { 
-    console.error("Admin data fetch error:", err);
-    res.status(500).json({ message: "Error fetching admin data" }); 
-  }
+  } catch (err) { res.status(500).json({ message: "Error fetching admin data" }); }
 });
 
+app.post("/api/admin/update-balance", auth, adminAuth, async (req, res) => {
+  try {
+    const { userId, balance } = req.body;
+    await User.findByIdAndUpdate(userId, { balance: Number(balance) });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ message: "Update failed" }); }
+});
+
+app.delete("/api/admin/delete-user/:id", auth, adminAuth, async (req, res) => {
+  try {
+    await User.findByIdAndDelete(req.params.id);
+    res.json({ success: true, message: "User Deleted" });
+  } catch (err) { res.status(500).json({ message: "Delete failed" }); }
+});
+
+// --- Other Admin Actions ---
 app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
   try {
     const { id, status } = req.body; 
@@ -309,14 +291,6 @@ app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
     }
     res.json({ success: true, message: `Request ${status} successfully` });
   } catch (err) { res.status(500).json({ message: "Action failed" }); }
-});
-
-app.post("/api/admin/update-balance", auth, adminAuth, async (req, res) => {
-  try {
-    const { userId, balance } = req.body;
-    await User.findByIdAndUpdate(userId, { balance: Number(balance) });
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ message: "Update failed" }); }
 });
 
 app.post("/api/admin/create-plan", auth, adminAuth, async (req, res) => {
