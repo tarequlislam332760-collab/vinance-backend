@@ -1,20 +1,19 @@
-// models/FuturesTrade.js
 const mongoose = require('mongoose');
 
 const futuresTradeSchema = new mongoose.Schema({
     user: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'User', // আপনার User মডেলের নাম যদি 'User' হয়
+        ref: 'User', 
         required: true
     },
     symbol: {
         type: String,
         required: true,
-        uppercase: true // যেমন: BTC, ETH
+        uppercase: true 
     },
     type: {
         type: String,
-        enum: ['buy', 'sell'], // buy মানে Long, sell মানে Short
+        enum: ['buy', 'sell'], 
         required: true
     },
     amount: {
@@ -29,6 +28,20 @@ const futuresTradeSchema = new mongoose.Schema({
         type: Number,
         required: true
     },
+    // --- নতুন যোগ করা ফিল্ড ---
+    tp: {
+        type: Number, // Take Profit Price
+        default: null
+    },
+    sl: {
+        type: Number, // Stop Loss Price
+        default: null
+    },
+    pnl: {
+        type: Number, // Profit or Loss amount
+        default: 0
+    },
+    // ------------------------
     status: {
         type: String,
         enum: ['open', 'closed'],
