@@ -57,7 +57,7 @@ const FuturesTrade = mongoose.models.FuturesTrade || mongoose.model("FuturesTrad
 
 const Trader = mongoose.models.Trader || mongoose.model("Trader", new mongoose.Schema({
   name: String,
-  image: String,
+  image: { type: String, default: "https://cdn-icons-png.flaticon.com/512/3135/3135715.png" }, // Default image added
   profit: { type: Number, default: 0 }, 
   followers: { type: Number, default: 0 },
   winRate: { type: Number, default: 90 },
@@ -213,7 +213,7 @@ app.get("/api/traders/all", async (req, res) => {
   res.json(traders);
 });
 
-/* --- Trader Application Route (নতুন যোগ করা হলো) --- */
+/* --- Trader Application Route --- */
 app.post("/api/traders/apply", auth, async (req, res) => {
   try {
     const { experience, capital } = req.body;
@@ -224,7 +224,7 @@ app.post("/api/traders/apply", auth, async (req, res) => {
       profit: Number(experience), 
       winRate: 90, 
       aum: Number(capital), 
-      status: false // অ্যাডমিন এপ্রুভ করার আগ পর্যন্ত ইন-অ্যাক্টিভ থাকবে
+      status: false // Pending state for admin approval
     });
 
     res.status(201).json({ 
@@ -281,8 +281,12 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
     const users = await User.find().select("-password");
     const requests = await Transaction.find().populate("userId", "name email").sort({ createdAt: -1 });
     const investments = await Investment.find().populate("userId", "name email").populate("planId", "name profitPercent").sort({ createdAt: -1 });
-    const traders = await Trader.find(); 
-    res.json({ users, requests, investments, traders });
+    const traders = await Trader.find({ status: true }); 
+    
+    // 🔥 এই লাইনটি পেন্ডিং আবেদন দেখানোর জন্য যোগ করা হয়েছে
+    const pendingApplications = await Trader.find({ status: false }).sort({ createdAt: -1 });
+
+    res.json({ users, requests, investments, traders, pendingApplications });
   } catch (err) { res.status(500).json({ message: "Error fetching admin data" }); }
 });
 
