@@ -213,6 +213,29 @@ app.get("/api/traders/all", async (req, res) => {
   res.json(traders);
 });
 
+/* --- Trader Application Route (নতুন যোগ করা হলো) --- */
+app.post("/api/traders/apply", auth, async (req, res) => {
+  try {
+    const { experience, capital } = req.body;
+    const user = await User.findById(req.user.id);
+
+    await Trader.create({
+      name: user?.name || "Pending Applicant",
+      profit: Number(experience), 
+      winRate: 90, 
+      aum: Number(capital), 
+      status: false // অ্যাডমিন এপ্রুভ করার আগ পর্যন্ত ইন-অ্যাক্টিভ থাকবে
+    });
+
+    res.status(201).json({ 
+      success: true, 
+      message: "Application Submitted Successfully!" 
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Application Submission Failed" });
+  }
+});
+
 app.post("/api/copy-trade/follow", auth, async (req, res) => {
   try {
     const { traderId, amount } = req.body;
