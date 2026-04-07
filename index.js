@@ -57,7 +57,7 @@ const FuturesTrade = mongoose.models.FuturesTrade || mongoose.model("FuturesTrad
 
 const Trader = mongoose.models.Trader || mongoose.model("Trader", new mongoose.Schema({
   name: String,
-  image: { type: String, default: "https://cdn-icons-png.flaticon.com/512/3135/3135715.png" }, // Default image added
+  image: { type: String, default: "https://cdn-icons-png.flaticon.com/512/3135/3135715.png" },
   profit: { type: Number, default: 0 }, 
   followers: { type: Number, default: 0 },
   winRate: { type: Number, default: 90 },
@@ -213,6 +213,19 @@ app.get("/api/traders/all", async (req, res) => {
   res.json(traders);
 });
 
+// 🔥 নিউ রাউট: ক্যাটাগরি অনুযায়ী ট্রেডার ফিল্টার করার জন্য (ROI, Smart Copy ইত্যাদি)
+app.get("/api/traders/categorized", async (req, res) => {
+  try {
+    const traders = await Trader.find({ status: true });
+    const categorized = {
+      highRoi: traders.filter(t => t.profit >= 50), // ৫০% এর বেশি প্রফিট যাদের
+      smartCopy: traders.filter(t => t.mdd <= 10 && t.winRate >= 85), // কম রিস্ক ও ভালো উইন রেট
+      all: traders
+    };
+    res.json(categorized);
+  } catch (err) { res.status(500).json({ message: "Error fetching categorized traders" }); }
+});
+
 /* --- Trader Application Route --- */
 app.post("/api/traders/apply", auth, async (req, res) => {
   try {
@@ -224,7 +237,7 @@ app.post("/api/traders/apply", auth, async (req, res) => {
       profit: Number(experience), 
       winRate: 90, 
       aum: Number(capital), 
-      status: false // Pending state for admin approval
+      status: false 
     });
 
     res.status(201).json({ 
@@ -252,7 +265,6 @@ app.post("/api/copy-trade/follow", auth, async (req, res) => {
 
 /* ================= ADMIN PANEL ================= */
 
-// --- Trader Management (Create, Edit, Delete) ---
 app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
   try {
     const { name, image, profit, winRate, aum, mdd, chartData } = req.body;
@@ -275,15 +287,12 @@ app.delete("/api/admin/delete-trader/:id", auth, adminAuth, async (req, res) => 
   } catch (err) { res.status(500).json({ message: "Delete failed" }); }
 });
 
-// --- User Management (Get All, Update, Delete) ---
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select("-password");
     const requests = await Transaction.find().populate("userId", "name email").sort({ createdAt: -1 });
     const investments = await Investment.find().populate("userId", "name email").populate("planId", "name profitPercent").sort({ createdAt: -1 });
     const traders = await Trader.find({ status: true }); 
-    
-    // 🔥 এই লাইনটি পেন্ডিং আবেদন দেখানোর জন্য যোগ করা হয়েছে
     const pendingApplications = await Trader.find({ status: false }).sort({ createdAt: -1 });
 
     res.json({ users, requests, investments, traders, pendingApplications });
@@ -305,7 +314,6 @@ app.delete("/api/admin/delete-user/:id", auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Delete failed" }); }
 });
 
-// --- Other Admin Actions ---
 app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
   try {
     const { id, status } = req.body; 
