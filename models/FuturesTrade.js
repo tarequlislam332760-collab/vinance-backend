@@ -53,4 +53,4 @@ const futuresTradeSchema = new mongoose.Schema({
     }
 });
 
-module.exports = mongoose.model('FuturesTrade', futuresTradeSchema);
+module.exports = mongoose.model('FuturesTrade', futuresTradeSchema); 
