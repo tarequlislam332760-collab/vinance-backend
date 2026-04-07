@@ -9,14 +9,23 @@ dotenv.config();
 const app = express();
 
 /* ================= MIDDLEWARE ================= */
+// CORS আপডেট করা হয়েছে যাতে সব Vercel সাবডোমেইন কাজ করে
 app.use(cors({
-  origin: ["https://vinance-frontend-vjqa.vercel.app", "https://vinance-frontend.vercel.app", "http://localhost:5173"],
+  origin: [
+    "https://vinance-frontend-vjqa.vercel.app", 
+    "https://vinance-frontend.vercel.app", 
+    "http://localhost:5173",
+    /\.vercel\.app$/ 
+  ],
   credentials: true
 }));
 app.use(express.json());
 
 /* ================= DATABASE ================= */
-mongoose.connect(process.env.MONGO_URI)
+// এখানে কানেকশন টাইমআউট ৫ সেকেন্ড করা হয়েছে যাতে সার্ভার হ্যাং না হয়
+mongoose.connect(process.env.MONGO_URI || process.env.MONGODB_URI, {
+  serverSelectionTimeoutMS: 5000, 
+})
   .then(() => console.log("✅ DB Connected"))
   .catch(err => console.log("❌ DB Error:", err));
 
@@ -213,20 +222,18 @@ app.get("/api/traders/all", async (req, res) => {
   res.json(traders);
 });
 
-// 🔥 নিউ রাউট: ক্যাটাগরি অনুযায়ী ট্রেডার ফিল্টার করার জন্য (ROI, Smart Copy ইত্যাদি)
 app.get("/api/traders/categorized", async (req, res) => {
   try {
     const traders = await Trader.find({ status: true });
     const categorized = {
-      highRoi: traders.filter(t => t.profit >= 50), // ৫০% এর বেশি প্রফিট যাদের
-      smartCopy: traders.filter(t => t.mdd <= 10 && t.winRate >= 85), // কম রিস্ক ও ভালো উইন রেট
+      highRoi: traders.filter(t => t.profit >= 50),
+      smartCopy: traders.filter(t => t.mdd <= 10 && t.winRate >= 85), 
       all: traders
     };
     res.json(categorized);
   } catch (err) { res.status(500).json({ message: "Error fetching categorized traders" }); }
 });
 
-/* --- Trader Application Route --- */
 app.post("/api/traders/apply", auth, async (req, res) => {
   try {
     const { experience, capital } = req.body;
