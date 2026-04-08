@@ -102,12 +102,8 @@ const adminAuth = (req, res, next) => {
 app.post("/api/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
-    const cleanEmail = email.toLowerCase().trim();
-    const existingUser = await User.findOne({ email: cleanEmail });
-    if (existingUser) return res.status(400).json({ message: "Email already exists" });
-
     const hashedPassword = bcrypt.hashSync(password, 10);
-    await User.create({ name, email: cleanEmail, password: hashedPassword });
+    await User.create({ name, email: email.toLowerCase().trim(), password: hashedPassword });
     res.status(201).json({ success: true });
   } catch (err) { res.status(500).json({ message: "Registration Failed" }); }
 });
@@ -116,25 +112,12 @@ app.post("/api/login", async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ message: "Missing Fields" });
-
-    const cleanEmail = email.toLowerCase().trim();
-    const user = await User.findOne({ email: cleanEmail });
-    if (!user) return res.status(400).json({ message: "Invalid credentials" });
-
+    const user = await User.findOne({ email: email.toLowerCase().trim() });
+    if (!user) return res.status(400).json({ message: "Wrong Info" });
     const isMatch = bcrypt.compareSync(password, user.password);
-    if (!isMatch) return res.status(400).json({ message: "Invalid credentials" });
-
-    const token = jwt.sign(
-      { id: user._id, role: user.role }, 
-      process.env.JWT_SECRET || "fallback_secret", 
-      { expiresIn: "7d" }
-    );
-
-    res.json({ 
-      success: true,
-      token, 
-      user: { _id: user._id, name: user.name, email: user.email, balance: user.balance, role: user.role } 
-    });
+    if (!isMatch) return res.status(400).json({ message: "Wrong Info" });
+    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
+    res.json({ token, user: { _id: user._id, name: user.name, email: user.email, balance: user.balance, role: user.role } });
   } catch (err) { res.status(500).json({ message: "Internal Server Error" }); }
 });
 
@@ -211,18 +194,22 @@ app.get("/api/my-investments", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error fetching logs" }); }
 });
 
+/* --- Updated Futures Trade Route --- */
 app.post("/api/futures/trade", auth, async (req, res) => {
   try {
     const { amount, type, symbol, leverage, entryPrice } = req.body;
     const user = await User.findById(req.user.id);
     
+    // ব্যালেন্স ভেরিফিকেশন
     if (!user || user.balance < Number(amount)) {
       return res.status(400).json({ success: false, message: "আপনার পর্যাপ্ত ব্যালেন্স নেই (Insufficient Balance)" });
     }
 
+    // ব্যালেন্স আপডেট
     user.balance -= Number(amount);
     await user.save();
 
+    // ফিউচার ট্রেড সেভ করা
     const trade = await FuturesTrade.create({
       userId: user._id, 
       symbol: symbol || "BTCUSDT", 
@@ -233,6 +220,7 @@ app.post("/api/futures/trade", auth, async (req, res) => {
       status: "open"
     });
 
+    // ট্রানজেকশন রেকর্ড তৈরি
     await Transaction.create({ 
       userId: user._id, 
       type: "futures", 
@@ -241,6 +229,7 @@ app.post("/api/futures/trade", auth, async (req, res) => {
       method: `${symbol} ${leverage}x ${type.toUpperCase()}` 
     });
 
+    // সাকসেসফুল রেসপন্স (যাতে ফ্রন্টএন্ডে ইনপুট ক্লিয়ার হয়)
     res.json({ 
       success: true, 
       message: "Futures Trade Successfully Opened!", 
@@ -249,6 +238,7 @@ app.post("/api/futures/trade", auth, async (req, res) => {
     });
 
   } catch (err) { 
+    console.error("Futures Error:", err.message);
     res.status(500).json({ success: false, message: "Futures trade failed" }); 
   }
 });
@@ -258,6 +248,7 @@ app.get("/api/my-futures", auth, async (req, res) => {
   res.json(data);
 });
 
+/* --- Copy Trade Routes --- */
 app.get("/api/traders/all", async (req, res) => {
   const traders = await Trader.find({ status: true }); 
   res.json(traders);
@@ -279,6 +270,7 @@ app.post("/api/traders/apply", auth, async (req, res) => {
   try {
     const { experience, capital } = req.body;
     const user = await User.findById(req.user.id);
+
     await Trader.create({
       name: user?.name || "Pending Applicant",
       profit: Number(experience), 
@@ -286,8 +278,14 @@ app.post("/api/traders/apply", auth, async (req, res) => {
       aum: Number(capital), 
       status: false 
     });
-    res.status(201).json({ success: true, message: "Application Submitted Successfully!" });
-  } catch (err) { res.status(500).json({ message: "Application Submission Failed" }); }
+
+    res.status(201).json({ 
+      success: true, 
+      message: "Application Submitted Successfully!" 
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Application Submission Failed" });
+  }
 });
 
 app.post("/api/copy-trade/follow", auth, async (req, res) => {
@@ -335,6 +333,7 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
     const investments = await Investment.find().populate("userId", "name email").populate("planId", "name profitPercent").sort({ createdAt: -1 });
     const traders = await Trader.find({ status: true }); 
     const pendingApplications = await Trader.find({ status: false }).sort({ createdAt: -1 });
+
     res.json({ users, requests, investments, traders, pendingApplications });
   } catch (err) { res.status(500).json({ message: "Error fetching admin data" }); }
 });
