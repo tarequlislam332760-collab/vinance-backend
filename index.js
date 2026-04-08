@@ -112,29 +112,34 @@ app.post("/api/register", async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Registration Failed" }); }
 });
 
-// লগইন রুটে ছোটখাটো ভুল সংশোধন করা হয়েছে
 app.post("/api/login", async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ message: "Missing Email or Password" });
+    if (!email || !password) return res.status(400).json({ message: "Missing Fields" });
 
+    // ইমেইল ক্লিন করা (toLowerCase & trim)
     const cleanEmail = email.toLowerCase().trim();
     const user = await User.findOne({ email: cleanEmail });
     
     if (!user) return res.status(400).json({ message: "Invalid credentials" });
 
-    const isMatch = await bcrypt.compare(password, user.password);
+    // পাসওয়ার্ড চেক করা (Sync মেথড ব্যবহার করে যা বেশি স্টেবল)
+    const isMatch = bcrypt.compareSync(password, user.password);
     if (!isMatch) return res.status(400).json({ message: "Invalid credentials" });
 
-    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
+    // টোকেন জেনারেট করা
+    const token = jwt.sign(
+      { id: user._id, role: user.role }, 
+      process.env.JWT_SECRET || "fallback_secret", 
+      { expiresIn: "7d" }
+    );
 
     res.status(200).json({ 
-      success: true,
       token, 
       user: { _id: user._id, name: user.name, email: user.email, balance: user.balance, role: user.role } 
     });
   } catch (err) { 
-    console.error(err);
+    console.error("Login Error:", err);
     res.status(500).json({ message: "Internal Server Error" }); 
   }
 });
@@ -247,7 +252,8 @@ app.get("/api/my-futures", auth, async (req, res) => {
 });
 
 app.get("/api/traders/all", async (req, res) => {
-  res.json(await Trader.find({ status: true }));
+  const traders = await Trader.find({ status: true }); 
+  res.json(traders);
 });
 
 app.get("/api/traders/categorized", async (req, res) => {
