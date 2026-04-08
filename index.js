@@ -9,7 +9,6 @@ dotenv.config();
 const app = express();
 
 /* ================= MIDDLEWARE ================= */
-// CORS আপডেট করা হয়েছে যাতে সব Vercel সাবডোমেইন কাজ করে
 app.use(cors({
   origin: [
     "https://vinance-frontend-vjqa.vercel.app", 
@@ -22,7 +21,6 @@ app.use(cors({
 app.use(express.json());
 
 /* ================= DATABASE ================= */
-// এখানে কানেকশন টাইমআউট ৫ সেকেন্ড করা হয়েছে যাতে সার্ভার হ্যাং না হয়
 mongoose.connect(process.env.MONGO_URI || process.env.MONGODB_URI, {
   serverSelectionTimeoutMS: 5000, 
 })
@@ -196,19 +194,53 @@ app.get("/api/my-investments", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error fetching logs" }); }
 });
 
+/* --- Updated Futures Trade Route --- */
 app.post("/api/futures/trade", auth, async (req, res) => {
   try {
     const { amount, type, symbol, leverage, entryPrice } = req.body;
     const user = await User.findById(req.user.id);
-    if (!user || user.balance < Number(amount)) return res.status(400).json({ message: "Insufficient Balance" });
+    
+    // ব্যালেন্স ভেরিফিকেশন
+    if (!user || user.balance < Number(amount)) {
+      return res.status(400).json({ success: false, message: "আপনার পর্যাপ্ত ব্যালেন্স নেই (Insufficient Balance)" });
+    }
+
+    // ব্যালেন্স আপডেট
     user.balance -= Number(amount);
     await user.save();
+
+    // ফিউচার ট্রেড সেভ করা
     const trade = await FuturesTrade.create({
-      userId: user._id, symbol: symbol || "BTCUSDT", type, amount: Number(amount), leverage: Number(leverage) || 1, entryPrice: Number(entryPrice) || 0, status: "open"
+      userId: user._id, 
+      symbol: symbol || "BTCUSDT", 
+      type, 
+      amount: Number(amount), 
+      leverage: Number(leverage) || 1, 
+      entryPrice: Number(entryPrice) || 0, 
+      status: "open"
     });
-    await Transaction.create({ userId: user._id, type: "futures", amount: Number(amount), status: "approved", method: `${symbol} ${leverage}x ${type.toUpperCase()}` });
-    res.json({ success: true, message: "Futures Trade Opened", newBalance: user.balance, trade });
-  } catch (err) { res.status(500).json({ message: "Futures trade failed" }); }
+
+    // ট্রানজেকশন রেকর্ড তৈরি
+    await Transaction.create({ 
+      userId: user._id, 
+      type: "futures", 
+      amount: Number(amount), 
+      status: "approved", 
+      method: `${symbol} ${leverage}x ${type.toUpperCase()}` 
+    });
+
+    // সাকসেসফুল রেসপন্স (যাতে ফ্রন্টএন্ডে ইনপুট ক্লিয়ার হয়)
+    res.json({ 
+      success: true, 
+      message: "Futures Trade Successfully Opened!", 
+      newBalance: user.balance, 
+      trade 
+    });
+
+  } catch (err) { 
+    console.error("Futures Error:", err.message);
+    res.status(500).json({ success: false, message: "Futures trade failed" }); 
+  }
 });
 
 app.get("/api/my-futures", auth, async (req, res) => {
