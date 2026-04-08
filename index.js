@@ -103,7 +103,6 @@ app.post("/api/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
     const cleanEmail = email.toLowerCase().trim();
-    // চেক করা হচ্ছে ইমেইল আগে থেকেই আছে কি না
     const existingUser = await User.findOne({ email: cleanEmail });
     if (existingUser) return res.status(400).json({ message: "Email already exists" });
 
@@ -113,17 +112,31 @@ app.post("/api/register", async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Registration Failed" }); }
 });
 
+// লগইন রুটে ছোটখাটো ভুল সংশোধন করা হয়েছে
 app.post("/api/login", async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ message: "Missing Fields" });
-    const user = await User.findOne({ email: email.toLowerCase().trim() });
-    if (!user) return res.status(400).json({ message: "Wrong Info" });
-    const isMatch = bcrypt.compareSync(password, user.password);
-    if (!isMatch) return res.status(400).json({ message: "Wrong Info" });
+    if (!email || !password) return res.status(400).json({ message: "Missing Email or Password" });
+
+    const cleanEmail = email.toLowerCase().trim();
+    const user = await User.findOne({ email: cleanEmail });
+    
+    if (!user) return res.status(400).json({ message: "Invalid credentials" });
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(400).json({ message: "Invalid credentials" });
+
     const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
-    res.json({ token, user: { _id: user._id, name: user.name, email: user.email, balance: user.balance, role: user.role } });
-  } catch (err) { res.status(500).json({ message: "Internal Server Error" }); }
+
+    res.status(200).json({ 
+      success: true,
+      token, 
+      user: { _id: user._id, name: user.name, email: user.email, balance: user.balance, role: user.role } 
+    });
+  } catch (err) { 
+    console.error(err);
+    res.status(500).json({ message: "Internal Server Error" }); 
+  }
 });
 
 app.get("/api/profile", auth, async (req, res) => {
@@ -234,8 +247,7 @@ app.get("/api/my-futures", auth, async (req, res) => {
 });
 
 app.get("/api/traders/all", async (req, res) => {
-  const traders = await Trader.find({ status: true }); 
-  res.json(traders);
+  res.json(await Trader.find({ status: true }));
 });
 
 app.get("/api/traders/categorized", async (req, res) => {
