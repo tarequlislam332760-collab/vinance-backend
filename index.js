@@ -86,7 +86,7 @@ const auth = (req, res, next) => {
   try {
     const token = req.headers.authorization?.split(" ")[1];
     if (!token) return res.status(401).json({ message: "No Token Provided" });
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || "fallback_secret");
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded; 
     next();
   } catch (err) { res.status(401).json({ message: "Invalid or Expired Token" }); }
@@ -102,8 +102,6 @@ const adminAuth = (req, res, next) => {
 app.post("/api/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ message: "Missing Fields" });
-    
     const cleanEmail = email.toLowerCase().trim();
     const existingUser = await User.findOne({ email: cleanEmail });
     if (existingUser) return res.status(400).json({ message: "Email already exists" });
@@ -121,11 +119,10 @@ app.post("/api/login", async (req, res) => {
 
     const cleanEmail = email.toLowerCase().trim();
     const user = await User.findOne({ email: cleanEmail });
-    
-    if (!user) return res.status(400).json({ message: "User not found" });
+    if (!user) return res.status(400).json({ message: "Invalid credentials" });
 
     const isMatch = bcrypt.compareSync(password, user.password);
-    if (!isMatch) return res.status(400).json({ message: "Incorrect password" });
+    if (!isMatch) return res.status(400).json({ message: "Invalid credentials" });
 
     const token = jwt.sign(
       { id: user._id, role: user.role }, 
@@ -133,21 +130,17 @@ app.post("/api/login", async (req, res) => {
       { expiresIn: "7d" }
     );
 
-    res.status(200).json({ 
+    res.json({ 
+      success: true,
       token, 
       user: { _id: user._id, name: user.name, email: user.email, balance: user.balance, role: user.role } 
     });
-  } catch (err) { 
-    console.error("Login Error:", err);
-    res.status(500).json({ message: "Internal Server Error" }); 
-  }
+  } catch (err) { res.status(500).json({ message: "Internal Server Error" }); }
 });
 
 app.get("/api/profile", auth, async (req, res) => {
-  try {
-    const user = await User.findById(req.user.id).select("-password");
-    res.json(user);
-  } catch (err) { res.status(500).json({ message: "Profile Fetch Error" }); }
+  const user = await User.findById(req.user.id).select("-password");
+  res.json(user);
 });
 
 app.put("/api/profile/update", auth, async (req, res) => {
@@ -222,11 +215,14 @@ app.post("/api/futures/trade", auth, async (req, res) => {
   try {
     const { amount, type, symbol, leverage, entryPrice } = req.body;
     const user = await User.findById(req.user.id);
+    
     if (!user || user.balance < Number(amount)) {
-      return res.status(400).json({ success: false, message: "Insufficient Balance" });
+      return res.status(400).json({ success: false, message: "আপনার পর্যাপ্ত ব্যালেন্স নেই (Insufficient Balance)" });
     }
+
     user.balance -= Number(amount);
     await user.save();
+
     const trade = await FuturesTrade.create({
       userId: user._id, 
       symbol: symbol || "BTCUSDT", 
@@ -236,6 +232,7 @@ app.post("/api/futures/trade", auth, async (req, res) => {
       entryPrice: Number(entryPrice) || 0, 
       status: "open"
     });
+
     await Transaction.create({ 
       userId: user._id, 
       type: "futures", 
@@ -243,8 +240,17 @@ app.post("/api/futures/trade", auth, async (req, res) => {
       status: "approved", 
       method: `${symbol} ${leverage}x ${type.toUpperCase()}` 
     });
-    res.json({ success: true, message: "Futures Trade Successfully Opened!", newBalance: user.balance, trade });
-  } catch (err) { res.status(500).json({ success: false, message: "Futures trade failed" }); }
+
+    res.json({ 
+      success: true, 
+      message: "Futures Trade Successfully Opened!", 
+      newBalance: user.balance, 
+      trade 
+    });
+
+  } catch (err) { 
+    res.status(500).json({ success: false, message: "Futures trade failed" }); 
+  }
 });
 
 app.get("/api/my-futures", auth, async (req, res) => {
@@ -252,7 +258,6 @@ app.get("/api/my-futures", auth, async (req, res) => {
   res.json(data);
 });
 
-/* --- Copy Trade Routes --- */
 app.get("/api/traders/all", async (req, res) => {
   const traders = await Trader.find({ status: true }); 
   res.json(traders);
