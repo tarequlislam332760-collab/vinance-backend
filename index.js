@@ -24,17 +24,27 @@ if (mongoose.connection.readyState === 0) {
 
 /* ================= MODELS ================= */
 const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema({
-  name: String, email: { type: String, unique: true }, password: String, role: { type: String, default: "user" }, balance: { type: Number, default: 0 }
+  name: String, 
+  email: { type: String, unique: true }, 
+  password: String, 
+  role: { type: String, default: "user" }, 
+  balance: { type: Number, default: 0 }
 }, { timestamps: true }));
 
 const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  type: String, amount: Number, method: String, status: { type: String, default: "pending" }
+  type: String, 
+  amount: Number, 
+  method: String, 
+  status: { type: String, default: "pending" }
 }, { timestamps: true }));
 
 const Trader = mongoose.models.Trader || mongoose.model("Trader", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  name: String, experience: Number, capital: Number, status: { type: String, default: "pending" }
+  name: String, 
+  experience: Number, 
+  capital: Number, 
+  status: { type: String, default: "pending" }
 }, { timestamps: true }));
 
 /* ================= AUTH MIDDLEWARE ================= */
@@ -54,7 +64,12 @@ const adminAuth = (req, res, next) => {
 
 /* ================= ROUTES ================= */
 
-// ১. প্রোফাইল (Error 404 fix)
+// ০. হোম রুট (Cannot GET / ফিক্স)
+app.get("/", (req, res) => {
+  res.send("🚀 Vinance API is Live and Running...");
+});
+
+// ১. প্রোফাইল
 app.get("/api/profile", auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select("-password");
@@ -62,10 +77,10 @@ app.get("/api/profile", auth, async (req, res) => {
   } catch { res.status(500).json({ message: "Error" }); }
 });
 
-// ২. ট্রেড (Buy/Sell/Future - Error 404 fix)
+// ২. ট্রেড (Buy/Sell/Future - Success Message ফিক্স)
 app.post("/api/trade", auth, async (req, res) => {
   try {
-    const { amount, symbol, leverage, type } = req.body; // type: buy or sell
+    const { amount, symbol, leverage, type } = req.body; 
     const user = await User.findById(req.user.id);
     const numAmount = Number(amount);
 
@@ -82,7 +97,7 @@ app.post("/api/trade", auth, async (req, res) => {
   } catch { res.status(500).json({ success: false, message: "Trade Failed" }); }
 });
 
-// ৩. ইনভেস্টমেন্ট (Investment/Plan - Error 404 fix)
+// ৩. ইনভেস্টমেন্ট
 app.post("/api/invest", auth, async (req, res) => {
   try {
     const { amount, planName } = req.body;
@@ -97,7 +112,7 @@ app.post("/api/invest", auth, async (req, res) => {
   } catch { res.status(500).json({ success: false }); }
 });
 
-// ৪. ট্রেডার অ্যাপ্লাই ও লিস্ট (Admin/User Fix)
+// ৪. ট্রেডার অ্যাপ্লাই ও লিস্ট
 app.post("/api/traders", auth, async (req, res) => {
   try {
     const { name, experience, capital } = req.body;
@@ -136,7 +151,7 @@ app.post("/api/login", async (req, res) => {
 
 /* ================= ADMIN ONLY ACTIONS ================= */
 
-// ৭. সব ডাটা ফেচ (Admin Dashboard)
+// ৭. সব ডাটা ফেচ
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().sort({ createdAt: -1 });
@@ -146,7 +161,7 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   } catch { res.status(500).json({ success: false }); }
 });
 
-// ৮. ইউজার আপডেট (অ্যাডমিন প্যানেল থেকে ব্যালেন্স/রোল চেঞ্জ)
+// ৮. ইউজার আপডেট (অ্যাডমিন প্যানেল ফিক্স)
 app.post("/api/admin/update-user", auth, adminAuth, async (req, res) => {
   try {
     const { userId, balance, role } = req.body;
@@ -155,7 +170,7 @@ app.post("/api/admin/update-user", auth, adminAuth, async (req, res) => {
   } catch { res.status(500).json({ success: false }); }
 });
 
-// ৯. রিকোয়েস্ট হ্যান্ডেল (Deposit/Withdraw Approve)
+// ৯. রিকোয়েস্ট হ্যান্ডেল (Deposit/Withdraw Approve)
 app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
   try {
     const { id, status } = req.body;
