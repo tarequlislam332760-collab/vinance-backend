@@ -24,12 +24,11 @@ app.use(cors({
 app.use(express.json());
 
 /* ================= DATABASE CONNECTION ================= */
-const dbURI = process.env.MONGO_URI || process.env.MONGODB_URI;
-mongoose.connect(dbURI)
+mongoose.connect(process.env.MONGO_URI || process.env.MONGODB_URI)
   .then(() => console.log("✅ DB Connected Successfully"))
   .catch(err => console.error("❌ DB Connection Error:", err));
 
-/* ================= MODELS ================= */
+/* ================= DATABASE MODELS ================= */
 const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema({
   name: { type: String, required: true }, 
   email: { type: String, unique: true, required: true }, 
@@ -103,18 +102,6 @@ app.get("/api/profile", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: "Fetch Error" }); }
 });
 
-// ✅ প্রোফাইল আপডেট ফিক্স
-app.put("/api/profile/update", auth, async (req, res) => {
-  try {
-    const { name, password } = req.body;
-    const updateData = {};
-    if (name) updateData.name = name;
-    if (password) updateData.password = await bcrypt.hash(password, 10);
-    const user = await User.findByIdAndUpdate(req.user.id, updateData, { new: true }).select("-password");
-    res.json({ success: true, user });
-  } catch (err) { res.status(500).json({ success: false, message: "Update Failed" }); }
-});
-
 /* ================= FINANCIAL ACTIONS ================= */
 app.post("/api/deposit", auth, async (req, res) => {
   try {
@@ -142,23 +129,23 @@ app.post("/api/futures/trade", auth, async (req, res) => {
     const { amount, type, symbol, leverage } = req.body;
     const user = await User.findById(req.user.id);
     const numAmount = Number(amount);
-    if (user.balance < numAmount) return res.status(400).json({ success: false, message: "Low Balance" });
+    if (user.balance < numAmount) return res.status(400).json({ success: false, message: "Insufficient Balance" });
     user.balance -= numAmount;
     await user.save();
     await Transaction.create({ userId: user._id, type: "futures", amount: numAmount, status: "approved", method: `${symbol} ${leverage}x` });
     res.json({ success: true, message: "Trade Successful!", newBalance: user.balance });
-  } catch (err) { res.status(500).json({ success: false, message: "Trade Error" }); }
+  } catch (err) { res.status(500).json({ success: false, message: "Trade failed" }); }
 });
 
-// ✅ AI Plans Fetch 
+// ✅ AI Plans Fetch
 app.get("/api/plans", async (req, res) => {
   try {
     const plans = await Plan.find({ status: true });
     res.json(plans);
-  } catch (err) { res.status(500).json({ success: false, message: "Plans Load Failed" }); }
+  } catch (err) { res.status(500).json({ success: false, message: "Failed to load plans" }); }
 });
 
-// ✅ Logs History 
+// ✅ Logs History
 app.get("/api/transactions", auth, async (req, res) => {
   try {
     const data = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
@@ -167,13 +154,13 @@ app.get("/api/transactions", auth, async (req, res) => {
 });
 
 /* ================= ADMIN ACTIONS ================= */
-// ✅ অ্যাডমিন ব্যালেন্স আপডেট ফিক্স
-app.post("/api/admin/update-balance", auth, adminAuth, async (req, res) => {
+app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
-    const { userId, balance } = req.body;
-    await User.findByIdAndUpdate(userId, { balance: Number(balance) });
-    res.json({ success: true, message: "Balance Updated!" });
-  } catch (err) { res.status(500).json({ success: false, message: "Update Failed" }); }
+    const users = await User.find().select("-password");
+    const requests = await Transaction.find().populate("userId", "name email").sort({ createdAt: -1 });
+    const traders = await Trader.find().sort({ createdAt: -1 });
+    res.json({ success: true, users, requests, traders });
+  } catch (err) { res.status(500).json({ success: false, message: "Admin Error" }); }
 });
 
 app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
@@ -185,25 +172,15 @@ app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
     }
     trx.status = status;
     await trx.save();
-    res.json({ success: true, message: "Action Success" });
+    res.json({ success: true, message: "Action Successful!" });
   } catch (err) { res.status(500).json({ success: false, message: "Action failed" }); }
-});
-
-app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
-  try {
-    const users = await User.find().select("-password");
-    const requests = await Transaction.find().populate("userId", "name email").sort({ createdAt: -1 });
-    const traders = await Trader.find().sort({ createdAt: -1 });
-    const plans = await Plan.find(); // অ্যাডমিনের জন্য সব প্ল্যান
-    res.json({ success: true, users, requests, traders, plans });
-  } catch (err) { res.status(500).json({ success: false, message: "Admin Error" }); }
 });
 
 app.post("/api/admin/create-plan", auth, adminAuth, async (req, res) => {
   try {
     await Plan.create(req.body);
-    res.json({ success: true, message: "Plan Created Successfully!" });
-  } catch (err) { res.status(500).json({ success: false, message: "Plan Creation Failed" }); }
+    res.json({ success: true, message: "Investment Plan Created!" });
+  } catch (err) { res.status(500).json({ success: false, message: "Failed" }); }
 });
 
 /* ================= START SERVER ================= */
