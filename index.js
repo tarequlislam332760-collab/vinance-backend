@@ -54,35 +54,58 @@ const adminAuth = (req, res, next) => {
   else res.status(403).json({ success: false, message: "Admin Only" });
 };
 
-/* ================= ROUTES (FIXED) ================= */
+/* ================= USER ROUTES (SPOT, FUTURE, INVEST) ================= */
 
-// ১. ইনভেস্টমেন্ট ও ট্রেডার্স (View/Delete Fix)
-app.get("/api/plans", async (req, res) => {
-  const plans = await Plan.find();
-  res.json(plans);
+// ১. স্পট ও ফিউচার ট্রেড (সাকসেস মেসেজ সহ)
+app.post("/api/trade", auth, async (req, res) => {
+  const { amount, symbol, type } = req.body;
+  const user = await User.findById(req.user.id);
+  if (user.balance < amount) return res.status(400).json({ message: "Insufficient Balance" });
+  user.balance -= Number(amount);
+  await user.save();
+  await Transaction.create({ userId: user._id, type: "spot", amount, method: `${symbol} (${type})`, status: "approved" });
+  res.json({ success: true, message: "Spot Order Placed Successfully!", newBalance: user.balance });
 });
 
-app.get("/api/traders/all", async (req, res) => {
-  const traders = await Trader.find().sort({ createdAt: -1 });
-  res.json(traders);
+app.post("/api/futures/trade", auth, async (req, res) => {
+  const { amount, symbol, leverage, type } = req.body;
+  const user = await User.findById(req.user.id);
+  if (user.balance < amount) return res.status(400).json({ message: "Insufficient Balance" });
+  user.balance -= Number(amount);
+  await user.save();
+  await Transaction.create({ userId: user._id, type: "futures", amount, method: `${symbol} ${leverage}x (${type})`, status: "approved" });
+  res.json({ success: true, message: "Future Trade Executed Successfully!", newBalance: user.balance });
 });
 
-app.post("/api/traders/apply", auth, async (req, res) => {
-  try {
-    await Trader.create({ userId: req.user.id, ...req.body });
-    res.json({ success: true, message: "Application Submitted!" });
-  } catch { res.status(500).json({ success: false }); }
+// ২. ইনভেস্টমেন্ট ও ডিপোজিট
+app.post("/api/invest", auth, async (req, res) => {
+  const { amount, planId, planName } = req.body;
+  const user = await User.findById(req.user.id);
+  if (user.balance < amount) return res.status(400).json({ message: "Low Balance" });
+  user.balance -= Number(amount);
+  await user.save();
+  await Transaction.create({ userId: user._id, type: "investment", amount, method: planName, status: "approved" });
+  res.json({ success: true, message: "Investment Successful!" });
 });
 
-// ২. ট্রানজেকশন হিস্ট্রি
+app.post("/api/deposit", auth, async (req, res) => {
+  await Transaction.create({ userId: req.user.id, type: "deposit", ...req.body });
+  res.json({ success: true, message: "Deposit request submitted!" });
+});
+
+// ৩. লগস ও প্রোফাইল
 app.get("/api/transactions", auth, async (req, res) => {
   const logs = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
   res.json(logs);
 });
 
+app.get("/api/my-investments", auth, async (req, res) => {
+  const data = await Transaction.find({ userId: req.user.id, type: "investment" });
+  res.json(data);
+});
+
 /* ================= ADMIN ACTIONS (সব ফিক্সড) ================= */
 
-// সব ডাটা ফেচ
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select("-password");
@@ -93,49 +116,17 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   } catch { res.status(500).json({ success: false }); }
 });
 
-// ব্যালেন্স আপডেট
-app.post("/api/admin/update-balance", auth, adminAuth, async (req, res) => {
-  try {
-    const { userId, balance } = req.body;
-    await User.findByIdAndUpdate(userId, { balance: Number(balance) });
-    res.json({ success: true, message: "Balance Updated!" });
-  } catch { res.status(500).json({ success: false, message: "Update Failed!" }); }
+app.put("/api/admin/update-trader/:id", auth, adminAuth, async (req, res) => {
+  await Trader.findByIdAndUpdate(req.params.id, req.body);
+  res.json({ success: true, message: "Trader Profile Updated!" });
 });
 
-// প্ল্যান তৈরি
-app.post("/api/admin/create-plan", auth, adminAuth, async (req, res) => {
-  try {
-    await Plan.create(req.body);
-    res.json({ success: true, message: "Plan Created Successfully!" });
-  } catch { res.status(500).json({ success: false, message: "Failed to create plan" }); }
-});
-
-// রিকোয়েস্ট হ্যান্ডেল (Deposit/Withdraw Approve)
-app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
-  try {
-    const { id, status } = req.body;
-    const trx = await Transaction.findById(id);
-    if (status === "approved" && trx.type === "deposit") {
-      await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
-    }
-    trx.status = status;
-    await trx.save();
-    res.json({ success: true, message: "Action Successful!" });
-  } catch { res.status(500).json({ success: false }); }
-});
-
-// ৩. ডিলিট অপশন (Trader & Plan Delete Fix)
 app.delete("/api/admin/delete-trader/:id", auth, adminAuth, async (req, res) => {
   await Trader.findByIdAndDelete(req.params.id);
-  res.json({ success: true, message: "Trader Deleted" });
+  res.json({ success: true, message: "Trader Deleted Successfully" });
 });
 
-app.delete("/api/admin/delete-plan/:id", auth, adminAuth, async (req, res) => {
-  await Plan.findByIdAndDelete(req.params.id);
-  res.json({ success: true, message: "Plan Deleted" });
-});
-
-/* ================= AUTH ================= */
+/* ================= AUTH & SYSTEM ================= */
 app.post("/api/login", async (req, res) => {
   const { email, password } = req.body;
   const user = await User.findOne({ email: email.toLowerCase().trim() });
@@ -151,4 +142,5 @@ app.get("/api/profile", auth, async (req, res) => {
 
 app.get("/", (req, res) => res.send("🚀 Vinance API Live"));
 
+// Vercel-এর জন্য এক্সপোর্ট
 export default app;
