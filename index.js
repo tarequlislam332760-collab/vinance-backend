@@ -16,7 +16,9 @@ app.use(cors({
     "http://localhost:5173",
     /\.vercel\.app$/ 
   ],
-  credentials: true
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization"] // ৪Axios Error ফিক্স করার জন্য এটি জরুরি
 }));
 app.use(express.json());
 
@@ -102,6 +104,10 @@ const adminAuth = (req, res, next) => {
 app.post("/api/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
+    // ডুপ্লিকেট ইমেইল চেক (500 Error কমানোর জন্য)
+    const existing = await User.findOne({ email: email.toLowerCase().trim() });
+    if (existing) return res.status(400).json({ message: "User already exists" });
+
     const hashedPassword = bcrypt.hashSync(password, 10);
     await User.create({ name, email: email.toLowerCase().trim(), password: hashedPassword });
     res.status(201).json({ success: true });
@@ -194,22 +200,15 @@ app.get("/api/my-investments", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error fetching logs" }); }
 });
 
-/* --- Updated Futures Trade Route --- */
 app.post("/api/futures/trade", auth, async (req, res) => {
   try {
     const { amount, type, symbol, leverage, entryPrice } = req.body;
     const user = await User.findById(req.user.id);
-    
-    // ব্যালেন্স ভেরিফিকেশন
     if (!user || user.balance < Number(amount)) {
-      return res.status(400).json({ success: false, message: "আপনার পর্যাপ্ত ব্যালেন্স নেই (Insufficient Balance)" });
+      return res.status(400).json({ success: false, message: "Insufficient Balance" });
     }
-
-    // ব্যালেন্স আপডেট
     user.balance -= Number(amount);
     await user.save();
-
-    // ফিউচার ট্রেড সেভ করা
     const trade = await FuturesTrade.create({
       userId: user._id, 
       symbol: symbol || "BTCUSDT", 
@@ -219,8 +218,6 @@ app.post("/api/futures/trade", auth, async (req, res) => {
       entryPrice: Number(entryPrice) || 0, 
       status: "open"
     });
-
-    // ট্রানজেকশন রেকর্ড তৈরি
     await Transaction.create({ 
       userId: user._id, 
       type: "futures", 
@@ -228,19 +225,8 @@ app.post("/api/futures/trade", auth, async (req, res) => {
       status: "approved", 
       method: `${symbol} ${leverage}x ${type.toUpperCase()}` 
     });
-
-    // সাকসেসফুল রেসপন্স (যাতে ফ্রন্টএন্ডে ইনপুট ক্লিয়ার হয়)
-    res.json({ 
-      success: true, 
-      message: "Futures Trade Successfully Opened!", 
-      newBalance: user.balance, 
-      trade 
-    });
-
-  } catch (err) { 
-    console.error("Futures Error:", err.message);
-    res.status(500).json({ success: false, message: "Futures trade failed" }); 
-  }
+    res.json({ success: true, message: "Futures Trade Successfully Opened!", newBalance: user.balance, trade });
+  } catch (err) { res.status(500).json({ success: false, message: "Futures trade failed" }); }
 });
 
 app.get("/api/my-futures", auth, async (req, res) => {
@@ -248,7 +234,6 @@ app.get("/api/my-futures", auth, async (req, res) => {
   res.json(data);
 });
 
-/* --- Copy Trade Routes --- */
 app.get("/api/traders/all", async (req, res) => {
   const traders = await Trader.find({ status: true }); 
   res.json(traders);
@@ -270,7 +255,6 @@ app.post("/api/traders/apply", auth, async (req, res) => {
   try {
     const { experience, capital } = req.body;
     const user = await User.findById(req.user.id);
-
     await Trader.create({
       name: user?.name || "Pending Applicant",
       profit: Number(experience), 
@@ -278,14 +262,8 @@ app.post("/api/traders/apply", auth, async (req, res) => {
       aum: Number(capital), 
       status: false 
     });
-
-    res.status(201).json({ 
-      success: true, 
-      message: "Application Submitted Successfully!" 
-    });
-  } catch (err) {
-    res.status(500).json({ message: "Application Submission Failed" });
-  }
+    res.status(201).json({ success: true, message: "Application Submitted Successfully!" });
+  } catch (err) { res.status(500).json({ message: "Application Submission Failed" }); }
 });
 
 app.post("/api/copy-trade/follow", auth, async (req, res) => {
@@ -303,7 +281,6 @@ app.post("/api/copy-trade/follow", auth, async (req, res) => {
 });
 
 /* ================= ADMIN PANEL ================= */
-
 app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
   try {
     const { name, image, profit, winRate, aum, mdd, chartData } = req.body;
@@ -333,7 +310,6 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
     const investments = await Investment.find().populate("userId", "name email").populate("planId", "name profitPercent").sort({ createdAt: -1 });
     const traders = await Trader.find({ status: true }); 
     const pendingApplications = await Trader.find({ status: false }).sort({ createdAt: -1 });
-
     res.json({ users, requests, investments, traders, pendingApplications });
   } catch (err) { res.status(500).json({ message: "Error fetching admin data" }); }
 });
