@@ -87,6 +87,7 @@ app.post("/api/login", async (req, res) => {
     const user = await User.findOne({ email: req.body.email.toLowerCase().trim() });
     if (!user || !(await bcrypt.compare(req.body.password, user.password))) return res.status(400).json({ success: false, message: "Invalid credentials" });
     const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
+    // এডমিন মেনু দেখার জন্য role পাঠানো হচ্ছে
     res.json({ success: true, token, user: { _id: user._id, name: user.name, email: user.email, role: user.role, balance: user.balance } });
   } catch (err) { res.status(500).json({ success: false }); }
 });
@@ -94,14 +95,14 @@ app.post("/api/login", async (req, res) => {
 app.get("/api/profile", auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select("-password");
-    res.json(user);
+    res.json(user); // প্রোফাইল পেইজ ডাটা ফিক্স
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// ✅ Universal Trade Route (Spot Buy/Sell & Future Long/Short Fix)
+// ✅ Universal Trade Route (Success Message Fix)
 app.post("/api/futures/trade", auth, async (req, res) => {
   try {
-    const { amount, symbol, leverage, type } = req.body; // type: 'buy', 'sell', 'futures'
+    const { amount, symbol, leverage, type } = req.body;
     const user = await User.findById(req.user.id);
     const numAmount = Number(amount);
     
@@ -110,7 +111,6 @@ app.post("/api/futures/trade", auth, async (req, res) => {
     user.balance -= numAmount;
     await user.save();
     
-    // Transaction save
     await Transaction.create({ 
       userId: user._id, 
       type: type || "futures", 
@@ -169,10 +169,11 @@ app.get("/api/transactions", auth, async (req, res) => {
   res.json(await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 }));
 });
 
+// ✅ Become Lead / Trader Apply Fix
 app.post("/api/traders/apply", auth, async (req, res) => {
   try {
-    const existing = await Trader.findOne({ userId: req.user.id });
-    if (existing) return res.status(400).json({ success: false, message: "Already applied!" });
+    // আগের এপ্লিকেশন থাকলে ডিলিট করে নতুন নিবে
+    await Trader.findOneAndDelete({ userId: req.user.id });
     
     await Trader.create({ 
       userId: req.user.id, 
@@ -191,8 +192,9 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select("-password").sort({ createdAt: -1 });
     const requests = await Transaction.find().populate("userId", "name email").sort({ createdAt: -1 });
-    const traders = await Trader.find().sort({ createdAt: -1 });
-    res.json({ success: true, users, requests, traders });
+    const traders = await Trader.find().populate("userId", "name email").sort({ createdAt: -1 });
+    const plans = await Plan.find(); // এডমিন প্যানেল ফিক্স
+    res.json({ success: true, users, requests, traders, plans });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
@@ -224,7 +226,6 @@ app.delete("/api/admin/delete-user/:id", auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// ✅ Admin: Delete & Edit Trader Fix
 app.delete("/api/admin/delete-trader/:id", auth, adminAuth, async (req, res) => {
   try {
     await Trader.findByIdAndDelete(req.params.id);
