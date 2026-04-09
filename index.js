@@ -8,10 +8,14 @@ import dotenv from "dotenv";
 dotenv.config();
 const app = express();
 
-/* ================= MIDDLEWARE ================= */
+/* ================= MIDDLEWARE (CORS ফিক্স) ================= */
+// ফ্রন্টএন্ডে credentials: true থাকলে origin-এ "*" ব্যবহার করা যায় না। 
+// তাই সরাসরি ফ্রন্টএন্ড ইউআরএল দিতে হবে।
 app.use(cors({
-  origin: "*",
-  credentials: true
+  origin: "https://vinance-frontend-vjqa.vercel.app", 
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization"]
 }));
 app.use(express.json());
 
@@ -24,28 +28,22 @@ if (mongoose.connection.readyState === 0) {
 
 /* ================= MODELS ================= */
 const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema({
-  name: String, 
-  email: { type: String, unique: true }, 
-  password: String, 
-  role: { type: String, default: "user" }, 
-  balance: { type: Number, default: 0 }
+  name: String, email: { type: String, unique: true }, password: String, role: { type: String, default: "user" }, balance: { type: Number, default: 0 }
 }, { timestamps: true }));
 
 const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  type: String, 
-  amount: Number, 
-  method: String, 
-  status: { type: String, default: "pending" }
+  type: String, amount: Number, method: String, status: { type: String, default: "pending" }
 }, { timestamps: true }));
 
 const Trader = mongoose.models.Trader || mongoose.model("Trader", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  name: String, 
-  experience: Number, 
-  capital: Number, 
-  status: { type: String, default: "pending" }
+  name: String, experience: Number, capital: Number, status: { type: String, default: "pending" }
 }, { timestamps: true }));
+
+const Plan = mongoose.models.Plan || mongoose.model("Plan", new mongoose.Schema({
+  name: String, minAmount: Number, maxAmount: Number, profitPercent: Number, duration: Number, status: { type: Boolean, default: true }
+}));
 
 /* ================= AUTH MIDDLEWARE ================= */
 const auth = (req, res, next) => {
@@ -62,81 +60,104 @@ const adminAuth = (req, res, next) => {
   else res.status(403).json({ success: false, message: "Admin Only" });
 };
 
-/* ================= ROUTES ================= */
+/* ================= ROUTES (এরর ফিক্সড) ================= */
 
-// ০. হোম রুট (Cannot GET / ফিক্স)
-app.get("/", (req, res) => {
-  res.send("🚀 Vinance API is Live and Running...");
-});
+app.get("/", (req, res) => res.send("🚀 Vinance API is Live..."));
 
-// ১. প্রোফাইল
+// ১. প্রোফাইল ও আপডেট (404 এবং Profile Update ফিক্স)
 app.get("/api/profile", auth, async (req, res) => {
-  try {
-    const user = await User.findById(req.user.id).select("-password");
-    res.json(user);
-  } catch { res.status(500).json({ message: "Error" }); }
+  const user = await User.findById(req.user.id).select("-password");
+  res.json(user);
 });
 
-// ২. ট্রেড (Buy/Sell/Future - Success Message ফিক্স)
-app.post("/api/trade", auth, async (req, res) => {
+app.post("/api/profile/update", auth, async (req, res) => {
   try {
-    const { amount, symbol, leverage, type } = req.body; 
-    const user = await User.findById(req.user.id);
-    const numAmount = Number(amount);
-
-    if (user.balance < numAmount) return res.status(400).json({ success: false, message: "Insufficient Balance" });
-
-    user.balance -= numAmount;
-    await user.save();
-
-    await Transaction.create({
-      userId: user._id, type: "futures", amount: numAmount, method: `${symbol} ${leverage}x (${type})`, status: "approved"
-    });
-
-    res.json({ success: true, message: `${type.toUpperCase()} Order Placed Successfully!`, newBalance: user.balance });
-  } catch { res.status(500).json({ success: false, message: "Trade Failed" }); }
-});
-
-// ৩. ইনভেস্টমেন্ট
-app.post("/api/invest", auth, async (req, res) => {
-  try {
-    const { amount, planName } = req.body;
-    const user = await User.findById(req.user.id);
-    if (user.balance < amount) return res.status(400).json({ success: false, message: "Low Balance" });
-
-    user.balance -= Number(amount);
-    await user.save();
-
-    await Transaction.create({ userId: user._id, type: "investment", amount, method: planName, status: "approved" });
-    res.json({ success: true, message: "Investment Successful!", newBalance: user.balance });
+    const { name } = req.body;
+    await User.findByIdAndUpdate(req.user.id, { name });
+    res.json({ success: true, message: "Profile Updated Successfully!" });
   } catch { res.status(500).json({ success: false }); }
 });
 
-// ৪. ট্রেডার অ্যাপ্লাই ও লিস্ট
-app.post("/api/traders", auth, async (req, res) => {
+// ২. ট্রেড (Futures/Trade - 404 ফিক্স)
+app.post("/api/futures/trade", auth, async (req, res) => {
   try {
-    const { name, experience, capital } = req.body;
-    await Trader.create({ userId: req.user.id, name, experience: Number(experience), capital: Number(capital) });
-    res.json({ success: true, message: "Trader Request Sent Successfully!" });
+    const { amount, symbol, leverage } = req.body;
+    const user = await User.findById(req.user.id);
+    if (user.balance < Number(amount)) return res.status(400).json({ success: false, message: "Insufficient Balance" });
+    
+    user.balance -= Number(amount);
+    await user.save();
+    await Transaction.create({ userId: user._id, type: "futures", amount, method: `${symbol} ${leverage}x`, status: "approved" });
+    
+    res.json({ success: true, message: "Order Placed Successfully!", newBalance: user.balance });
+  } catch { res.status(500).json({ success: false }); }
+});
+
+// ৩. ইনভেস্টমেন্ট ও প্ল্যান (Plans 404 ফিক্স)
+app.get("/api/plans", async (req, res) => {
+  try {
+    const plans = await Plan.find({ status: true });
+    res.json(plans);
+  } catch { res.status(500).json([]); }
+});
+
+app.get("/api/my-investments", auth, async (req, res) => {
+  const data = await Transaction.find({ userId: req.user.id, type: "investment" });
+  res.json(data);
+});
+
+// ৪. ডিপোজিট ও উইথড্র (Deposit/Withdraw 404 ফিক্স)
+app.post("/api/deposit", auth, async (req, res) => {
+  await Transaction.create({ userId: req.user.id, type: "deposit", ...req.body });
+  res.json({ success: true, message: "Deposit request submitted!" });
+});
+
+app.post("/api/withdraw", auth, async (req, res) => {
+  const { amount } = req.body;
+  const user = await User.findById(req.user.id);
+  if (user.balance < amount) return res.status(400).json({ message: "Low Balance" });
+  await Transaction.create({ userId: req.user.id, type: "withdraw", ...req.body });
+  res.json({ success: true, message: "Withdrawal request submitted!" });
+});
+
+// ৫. ট্রেডার অ্যাপ্লাই (Traders/Apply ফিক্স)
+app.post("/api/traders/apply", auth, async (req, res) => {
+  try {
+    await Trader.create({ userId: req.user.id, ...req.body });
+    res.json({ success: true, message: "Application Submitted!" });
   } catch { res.status(500).json({ success: false }); }
 });
 
 app.get("/api/traders/all", auth, async (req, res) => {
-  try {
-    const traders = await Trader.find().sort({ createdAt: -1 });
-    res.json(traders);
-  } catch { res.status(500).json([]); }
+  const traders = await Trader.find().sort({ createdAt: -1 });
+  res.json(traders);
 });
 
-// ৫. ট্রানজেকশন লগস
+/* ================= ADMIN ACTIONS (প্যানেল ফিক্স) ================= */
+
+app.post("/api/admin/update-balance", auth, adminAuth, async (req, res) => {
+  const { userId, balance } = req.body;
+  await User.findByIdAndUpdate(userId, { balance });
+  res.json({ success: true, message: "Balance Updated!" });
+});
+
+app.post("/api/admin/create-plan", auth, adminAuth, async (req, res) => {
+  await Plan.create(req.body);
+  res.json({ success: true, message: "Plan Created!" });
+});
+
+app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
+  await Trader.create(req.body);
+  res.json({ success: true, message: "Trader Created!" });
+});
+
+// ৬. ট্রানজেকশন লগস
 app.get("/api/transactions", auth, async (req, res) => {
-  try {
-    const data = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
-    res.json(data);
-  } catch { res.status(500).json([]); }
+  const data = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
+  res.json(data);
 });
 
-// ৬. লগইন
+// ৭. লগইন
 app.post("/api/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -149,40 +170,4 @@ app.post("/api/login", async (req, res) => {
   } catch { res.status(500).json({ success: false }); }
 });
 
-/* ================= ADMIN ONLY ACTIONS ================= */
-
-// ৭. সব ডাটা ফেচ
-app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
-  try {
-    const users = await User.find().sort({ createdAt: -1 });
-    const requests = await Transaction.find().populate("userId", "name email").sort({ createdAt: -1 });
-    const traders = await Trader.find().sort({ createdAt: -1 });
-    res.json({ success: true, users, requests, traders });
-  } catch { res.status(500).json({ success: false }); }
-});
-
-// ৮. ইউজার আপডেট (অ্যাডমিন প্যানেল ফিক্স)
-app.post("/api/admin/update-user", auth, adminAuth, async (req, res) => {
-  try {
-    const { userId, balance, role } = req.body;
-    await User.findByIdAndUpdate(userId, { balance, role });
-    res.json({ success: true, message: "User Updated Successfully!" });
-  } catch { res.status(500).json({ success: false }); }
-});
-
-// ৯. রিকোয়েস্ট হ্যান্ডেল (Deposit/Withdraw Approve)
-app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
-  try {
-    const { id, status } = req.body;
-    const trx = await Transaction.findById(id);
-    if (status === "approved" && trx.type === "deposit") {
-      await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
-    }
-    trx.status = status;
-    await trx.save();
-    res.json({ success: true, message: `Request ${status}!` });
-  } catch { res.status(500).json({ success: false }); }
-});
-
-/* ================= EXPORT ================= */
 export default app;
