@@ -9,8 +9,21 @@ dotenv.config();
 const app = express();
 
 /* ================= MIDDLEWARE ================= */
+// ফ্রন্টএন্ড লিঙ্কের সাথে CORS কনফিগারেশন
+const allowedOrigins = [
+  "https://vinance-frontend-vjqa.vercel.app",
+  "http://localhost:5173",
+  "http://localhost:3000"
+];
+
 app.use(cors({
-  origin: true, 
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.indexOf(origin) !== -1 || origin.includes("vercel.app")) {
+      callback(null, true);
+    } else {
+      callback(new Error("CORS Policy Error"));
+    }
+  },
   credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
@@ -21,8 +34,8 @@ app.use(express.json());
 /* ================= DB CONNECTION ================= */
 const dbURI = process.env.MONGO_URI || process.env.MONGODB_URI;
 mongoose.connect(dbURI)
-  .then(() => console.log("✅ DB Connected Successfully"))
-  .catch(err => console.error("❌ DB Connection Error:", err));
+  .then(() => console.log("✅ Database Connected"))
+  .catch(err => console.error("❌ Database Connection Error:", err));
 
 /* ================= MODELS ================= */
 const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema({
@@ -55,7 +68,7 @@ const auth = (req, res, next) => {
     if (!token) return res.status(401).json({ success: false, message: "No Token Provided" });
     req.user = jwt.verify(token, process.env.JWT_SECRET);
     next();
-  } catch (err) { res.status(401).json({ success: false, message: "Session Expired" }); }
+  } catch (err) { res.status(401).json({ success: false, message: "Invalid/Expired Token" }); }
 };
 
 const adminAuth = (req, res, next) => {
@@ -64,16 +77,17 @@ const adminAuth = (req, res, next) => {
 };
 
 /* ================= ROUTES ================= */
-app.get("/", (req, res) => res.send("🚀 Vinance Final API - Version 4.0 Live"));
+app.get("/", (req, res) => res.send("🚀 Vinance API v4.0 Live"));
 
-// --- AUTH ROUTES ---
+// --- AUTH ---
 app.post("/api/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
-    const existing = await User.findOne({ email: email.toLowerCase().trim() });
+    const normalizedEmail = email.toLowerCase().trim();
+    const existing = await User.findOne({ email: normalizedEmail });
     if (existing) return res.status(400).json({ success: false, message: "Email already exists" });
     const hashedPassword = await bcrypt.hash(password, 10);
-    await User.create({ name, email: email.toLowerCase().trim(), password: hashedPassword });
+    await User.create({ name, email: normalizedEmail, password: hashedPassword });
     res.status(201).json({ success: true, message: "Registered!" });
   } catch (err) { res.status(500).json({ success: false }); }
 });
@@ -89,7 +103,7 @@ app.post("/api/login", async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- USER & PROFILE ---
+// --- PROFILE & UPDATE ---
 app.get("/api/profile", auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select("-password");
@@ -104,49 +118,45 @@ app.put("/api/profile/update", auth, async (req, res) => {
     if (name) user.name = name;
     if (email) user.email = email.toLowerCase().trim();
     await user.save();
-    res.json({ success: true, message: "Profile Updated!" });
+    res.json({ success: true, message: "Profile Updated!", user: { name: user.name, email: user.email } });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- FINANCE ROUTES (DEPOSIT & WITHDRAW) ---
+// --- DEPOSIT & WITHDRAW ---
 app.post("/api/deposit", auth, async (req, res) => {
   try {
-    const { amount, method, transactionId } = req.body;
     await Transaction.create({
       userId: req.user.id,
       type: "deposit",
-      amount: Number(amount),
-      method,
-      transactionId,
+      amount: Number(req.body.amount),
+      method: req.body.method,
+      transactionId: req.body.transactionId,
       status: "pending"
     });
-    res.json({ success: true, message: "Deposit Submitted!" });
+    res.json({ success: true, message: "Deposit request submitted!" });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
 app.post("/api/withdraw", auth, async (req, res) => {
   try {
-    const { amount, method, address } = req.body;
     const user = await User.findById(req.user.id);
-    const numAmt = Number(amount);
-    if (user.balance < numAmt) return res.status(400).json({ success: false, message: "Low Balance" });
-    
+    const numAmt = Number(req.body.amount);
+    if (user.balance < numAmt) return res.status(400).json({ success: false, message: "Insufficient balance" });
     user.balance -= numAmt;
     await user.save();
-    
     await Transaction.create({
       userId: req.user.id,
       type: "withdraw",
       amount: numAmt,
-      method,
-      transactionId: address,
+      method: req.body.method,
+      transactionId: req.body.address,
       status: "pending"
     });
-    res.json({ success: true, message: "Withdraw Submitted!" });
+    res.json({ success: true, message: "Withdrawal request submitted!" });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- TRADE ROUTES (SPOT & FUTURES) ---
+// --- TRADE (SPOT & FUTURES) ---
 const handleTrade = async (req, res) => {
   try {
     const { amount, symbol, leverage, type } = req.body; 
@@ -158,25 +168,25 @@ const handleTrade = async (req, res) => {
     user.balance -= numAmount;
     await user.save();
 
+    // প্রতিবার ট্রেড করলে ট্রানজেকশন তৈরি হবে যাতে Logs page খালি না থাকে
     await Transaction.create({
       userId: user._id,
       type: type || "trade",
       amount: numAmount,
-      symbol: symbol || "USDT",
+      symbol: symbol || "BTC",
       method: leverage ? `${leverage}x` : "Spot",
-      details: `${type || 'Order'} for ${symbol}`,
+      details: `${type || 'Trade'} order for ${symbol || 'USDT'}`,
       status: "approved"
     });
 
     res.json({ success: true, message: "Order successful!", newBalance: user.balance });
-  } catch (err) { res.status(500).json({ success: false }); }
+  } catch (err) { res.status(500).json({ success: false, message: "Trade error" }); }
 };
 
 app.post("/api/futures/trade", auth, handleTrade);
-app.post("/api/trade", auth, handleTrade);
-app.post("/api/spot/trade", auth, handleTrade);
+app.post("/api/trade", auth, handleTrade); // Spot ট্রেডের জন্য
 
-// --- LOGS & DATA ---
+// --- HISTORY & PLANS ---
 app.get("/api/transactions", auth, async (req, res) => {
   try {
     const logs = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
@@ -198,7 +208,7 @@ app.get("/api/traders/all", async (req, res) => {
   } catch (err) { res.status(500).json([]); }
 });
 
-// --- ADMIN ROUTES ---
+/* ================= ADMIN ACTIONS ================= */
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select("-password").sort({ createdAt: -1 });
@@ -213,7 +223,7 @@ app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
   try {
     const trader = await Trader.create(req.body);
     res.json({ success: true, message: "Trader Created!", trader });
-  } catch (err) { res.status(500).json({ success: false, message: "Failed to create" }); }
+  } catch (err) { res.status(500).json({ success: false }); }
 });
 
 app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
@@ -225,7 +235,7 @@ app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
     }
     trx.status = status;
     await trx.save();
-    res.json({ success: true, message: "Updated" });
+    res.json({ success: true, message: "Updated!" });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
@@ -233,12 +243,12 @@ app.post("/api/admin/update-balance", auth, adminAuth, async (req, res) => {
   try {
     const { userId, balance } = req.body;
     await User.findByIdAndUpdate(userId, { balance: Number(balance) });
-    res.json({ success: true, message: "Balance updated" });
+    res.json({ success: true, message: "Balance updated!" });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
 /* ================= START SERVER ================= */
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 API on Port ${PORT}`));
 
-export default app;
+export default app; 
