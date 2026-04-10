@@ -36,23 +36,24 @@ const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema(
 const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   type: String, 
-  amount: Number, 
-  symbol: String, 
-  method: String, 
-  status: { type: String, default: "completed" }, 
-  details: String 
+  amount: Number, symbol: String, method: String, transactionId: String, status: { type: String, default: "pending" }, details: String 
 }, { timestamps: true }));
+
+const Plan = mongoose.models.Plan || mongoose.model("Plan", new mongoose.Schema({
+  name: String, minAmount: Number, maxAmount: Number, profitPercent: Number, duration: Number, status: { type: Boolean, default: true }
+}));
 
 const Trader = mongoose.models.Trader || mongoose.model("Trader", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  name: String, 
-  img: String, 
-  profit: { type: String, default: "0%" }, 
-  winRate: { type: String, default: "0%" }, 
-  aum: { type: String, default: "$0" }, 
-  mdd: { type: String, default: "0%" }, 
-  experience: String, 
-  status: { type: String, default: "approved" } 
+  name: String, img: String, profit: { type: String, default: "0%" }, winRate: { type: String, default: "0%" }, 
+  aum: { type: String, default: "$0" }, mdd: { type: String, default: "0%" }, 
+  experience: String, status: { type: String, default: "approved" } 
+}, { timestamps: true }));
+
+const Investment = mongoose.models.Investment || mongoose.model("Investment", new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  planId: { type: mongoose.Schema.Types.ObjectId, ref: "Plan" },
+  amount: Number, status: { type: String, default: "active" }
 }, { timestamps: true }));
 
 /* ================= AUTH MIDDLEWARES ================= */
@@ -71,114 +72,105 @@ const adminAuth = (req, res, next) => {
 };
 
 /* ================= ROUTES ================= */
+app.get("/", (req, res) => res.send("🚀 Vinance System Final API Live"));
 
-// ✅ Health Check / Home Route
-app.get("/", (req, res) => res.send("🚀 Vinance API V9 Live & Stable"));
-
-// --- LOGIN ---
 app.post("/api/login", async (req, res) => {
   try {
-    const { email, password } = req.body;
-    const user = await User.findOne({ email: email.toLowerCase().trim() });
-    if (!user || !(await bcrypt.compare(password, user.password))) {
-      return res.status(400).json({ success: false, message: "Wrong credentials" });
+    const user = await User.findOne({ email: req.body.email.toLowerCase().trim() });
+    if (!user || !(await bcrypt.compare(req.body.password, user.password))) {
+      return res.status(400).json({ success: false, message: "Wrong details" });
     }
     const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
     res.json({ success: true, token, user: { _id: user._id, name: user.name, role: user.role, balance: user.balance } });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- ✅ SPOT/FUTURES TRADE FIX ---
-app.post("/api/trade", auth, async (req, res) => {
+// --- ✅ SPOT/FUTURES TRADE FIX (Buy/Sell Error Fix) ---
+const handleTrade = async (req, res) => {
   try {
-    const { amount, symbol, side, type } = req.body; 
+    const { amount, symbol, leverage, type, side } = req.body; 
     const user = await User.findById(req.user.id);
     const numAmt = Number(amount);
 
-    if (!numAmt || numAmt <= 0) return res.status(400).json({ success: false, message: "সঠিক অ্যামাউন্ট লিখুন" });
+    if (!numAmt || numAmt <= 0) return res.status(400).json({ success: false, message: "Invalid Amount" });
+    if (user.balance < numAmt) return res.status(400).json({ success: false, message: "Low Balance" });
 
-    if (side?.toLowerCase() === "buy") {
-      if (user.balance < numAmt) return res.status(400).json({ success: false, message: "পর্যাপ্ত ব্যালেন্স নেই" });
-      user.balance -= numAmt;
-    } else if (side?.toLowerCase() === "sell") {
-      user.balance += numAmt;
-    }
-
+    user.balance -= numAmt;
     await user.save();
 
-    // Create log for transaction page
     await Transaction.create({
       userId: user._id,
       type: type || "spot",
       amount: numAmt,
-      symbol: symbol || "USDT",
-      status: "completed",
-      details: `${side?.toUpperCase() || 'ORDER'} trade for ${symbol || 'Market'}`
+      symbol: symbol || "BTC/USDT",
+      method: leverage ? `${leverage}x` : "Spot",
+      status: "approved",
+      details: `${side || 'Order'} for ${symbol || 'Market'}`
     });
 
     res.json({ success: true, message: "Trade Successful!", newBalance: user.balance });
-  } catch (err) { res.status(500).json({ success: false, message: "ট্রেড ব্যর্থ হয়েছে" }); }
+  } catch (err) { res.status(500).json({ success: false, message: "Trade failed" }); }
+};
+
+app.post("/api/spot/trade", auth, handleTrade);
+app.post("/api/futures/trade", auth, handleTrade);
+app.post("/api/trade", auth, handleTrade);
+
+// --- ✅ TRADER APPLICATION (Become a Lead) ---
+app.post("/api/traders/apply", auth, async (req, res) => {
+  try {
+    const { experience, capital } = req.body;
+    const user = await User.findById(req.user.id);
+    await Trader.create({
+      userId: user._id, name: user.name, experience, aum: `$${capital}`, status: "approved"
+    });
+    res.json({ success: true, message: "Applied Successfully!" });
+  } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- ✅ LOGS PAGE FIX ---
+// --- ✅ LOGS PAGE FIX (যাতে পেজ আর খালি না দেখায়) ---
 app.get("/api/transactions", auth, async (req, res) => {
   try {
     const logs = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
-    res.json(logs); // Front-end expects direct array
+    res.json(logs); // অনেক সময় ফ্রন্টএন্ড সরাসরি অ্যারে চায়
   } catch (err) { res.status(500).json([]); }
 });
 
-// --- ✅ BECOME A TRADER ---
-app.post("/api/traders/apply", auth, async (req, res) => {
+// --- ✅ ADMIN PANEL - ALL DATA (ট্রেডার প্রোফাইল দেখার জন্য) ---
+app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
-    const user = await User.findById(req.user.id);
-    const exist = await Trader.findOne({ userId: user._id });
-    if (exist) return res.status(400).json({ success: false, message: "ইতিমধ্যেই আবেদন করেছেন" });
-
-    await Trader.create({
-      userId: user._id,
-      name: user.name,
-      experience: req.body.experience || "Expert",
-      aum: `$${req.body.capital || req.body.aum || 0}`,
-      status: "approved"
-    });
-    res.json({ success: true, message: "Application Approved" });
-  } catch (err) { res.status(500).json({ success: false }); }
-});
-
-// --- ✅ ADMIN PANEL: TRADERS LIST ---
-app.get("/api/admin/traders", auth, adminAuth, async (req, res) => {
-  try {
+    const users = await User.find().select("-password").sort({ createdAt: -1 });
+    const requests = await Transaction.find().populate("userId", "name email").sort({ createdAt: -1 });
     const traders = await Trader.find().sort({ createdAt: -1 });
-    res.json(traders); 
-  } catch (err) { res.status(500).json([]); }
-});
-
-// --- ✅ ADMIN PANEL: EDIT TRADER ---
-app.put("/api/admin/trader/:id", auth, adminAuth, async (req, res) => {
-  try {
-    const updated = await Trader.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    res.json({ success: true, message: "Trader Updated Successfully", data: updated });
+    const plans = await Plan.find();
+    res.json({ success: true, users, requests, traders, plans });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- ✅ ADMIN PANEL: DELETE TRADER ---
-app.delete("/api/admin/trader/:id", auth, adminAuth, async (req, res) => {
+// --- ✅ ADMIN - TRADER EDIT/DELETE (এগুলো নতুন যোগ করা হয়েছে) ---
+app.put("/api/admin/update-trader/:id", auth, adminAuth, async (req, res) => {
+  try {
+    await Trader.findByIdAndUpdate(req.params.id, req.body);
+    res.json({ success: true, message: "Trader Updated!" });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
+app.delete("/api/admin/delete-trader/:id", auth, adminAuth, async (req, res) => {
   try {
     await Trader.findByIdAndDelete(req.params.id);
-    res.json({ success: true, message: "Trader Deleted" });
+    res.json({ success: true, message: "Trader Deleted!" });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- PUBLIC TRADERS ---
 app.get("/api/traders/all", async (req, res) => {
-  try { 
-    const data = await Trader.find({ status: "approved" }).sort({ createdAt: -1 });
-    res.json(data); 
-  } catch (err) { res.status(500).json([]); }
+  try { res.json(await Trader.find().sort({ createdAt: -1 })); } catch (err) { res.status(500).json([]); }
+});
+
+app.get("/api/plans", async (req, res) => {
+  try { res.json(await Plan.find({ status: true })); } catch (err) { res.status(500).json([]); }
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server Running on ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 API Running`));
 
 export default app;
