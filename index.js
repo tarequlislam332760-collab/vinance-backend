@@ -38,7 +38,7 @@ const Plan = mongoose.models.Plan || mongoose.model("Plan", new mongoose.Schema(
 
 const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  type: { type: String, enum: ["deposit", "withdraw", "investment", "sell", "buy", "futures", "copy_trade"] },
+  type: { type: String }, // buy, sell, futures, deposit etc.
   amount: Number, method: String, transactionId: String, status: { type: String, default: "pending" }
 }, { timestamps: true }));
 
@@ -105,13 +105,14 @@ app.get("/api/profile", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// ✅ Universal Trade Route (Success Message Fix)
+// ✅ Universal Trade Route (Spot & Future Fix)
 app.post("/api/futures/trade", auth, async (req, res) => {
   try {
     const { amount, symbol, leverage, type } = req.body; 
     const user = await User.findById(req.user.id);
     const numAmount = Number(amount);
     
+    if (!numAmount || numAmount <= 0) return res.status(400).json({ success: false, message: "Invalid Amount" });
     if (user.balance < numAmount) return res.status(400).json({ success: false, message: "Insufficient Balance" });
 
     user.balance -= numAmount;
@@ -126,7 +127,10 @@ app.post("/api/futures/trade", auth, async (req, res) => {
     });
 
     res.json({ success: true, message: "Trade Successful!", newBalance: user.balance });
-  } catch (err) { res.status(500).json({ success: false, message: "Trade failed!" }); }
+  } catch (err) { 
+    console.error(err);
+    res.status(500).json({ success: false, message: "Trade failed!" }); 
+  }
 });
 
 app.post("/api/deposit", auth, async (req, res) => {
@@ -182,14 +186,16 @@ app.get("/api/transactions", auth, async (req, res) => {
   res.json(await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 }));
 });
 
+// ✅ Trader Creation Fix (Using User data if missing)
 app.post("/api/traders/apply", auth, async (req, res) => {
   try {
+    const user = await User.findById(req.user.id);
     const existing = await Trader.findOne({ userId: req.user.id });
     if (existing) return res.status(400).json({ success: false, message: "Already applied!" });
     
     await Trader.create({ 
       userId: req.user.id, 
-      name: req.body.name, 
+      name: req.body.name || user.name, 
       img: req.body.img || "",
       profit: req.body.profit || "0%",
       winRate: req.body.winRate || "0%",
@@ -199,7 +205,10 @@ app.post("/api/traders/apply", auth, async (req, res) => {
       status: "approved"
     });
     res.json({ success: true, message: "Trader Created Successfully!" });
-  } catch (err) { res.status(500).json({ success: false, message: "Failed to create trader" }); }
+  } catch (err) { 
+    console.error(err);
+    res.status(500).json({ success: false, message: "Failed to create trader" }); 
+  }
 });
 
 /* ================= ADMIN ACTIONS ================= */
@@ -242,7 +251,6 @@ app.delete("/api/admin/delete-user/:id", auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// ✅ Admin: Delete & Edit Trader Fix
 app.delete("/api/admin/delete-trader/:id", auth, adminAuth, async (req, res) => {
   try {
     await Trader.findByIdAndDelete(req.params.id);
