@@ -9,7 +9,6 @@ dotenv.config();
 const app = express();
 
 /* ================= MIDDLEWARE ================= */
-// মোবাইলে এবং বিভিন্ন ডিভাইসে অ্যাডমিন প্যানেল ও এপিআই এক্সেস নিশ্চিত করতে CORS আপডেট করা হয়েছে
 app.use(cors({
   origin: true, 
   credentials: true,
@@ -71,20 +70,7 @@ const adminAuth = (req, res, next) => {
 };
 
 /* ================= ROUTES ================= */
-app.get("/", (req, res) => res.send("🚀 Vinance System Final API Live"));
-
-// --- AUTH ---
-app.post("/api/register", async (req, res) => {
-  try {
-    const { name, email, password } = req.body;
-    const normalizedEmail = email.toLowerCase().trim();
-    const existing = await User.findOne({ email: normalizedEmail });
-    if (existing) return res.status(400).json({ success: false, message: "Email exists" });
-    const hashedPassword = await bcrypt.hash(password, 10);
-    await User.create({ name, email: normalizedEmail, password: hashedPassword });
-    res.status(201).json({ success: true, message: "Success!" });
-  } catch (err) { res.status(500).json({ success: false }); }
-});
+app.get("/", (req, res) => res.send("🚀 Vinance API V6 Live"));
 
 app.post("/api/login", async (req, res) => {
   try {
@@ -97,48 +83,7 @@ app.post("/api/login", async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- ✅ TRADER APPLICATION ---
-app.post("/api/traders/apply", auth, async (req, res) => {
-  try {
-    const { experience, capital } = req.body;
-    const user = await User.findById(req.user.id);
-    await Trader.create({
-      userId: user._id,
-      name: user.name,
-      experience: experience,
-      aum: `$${capital}`,
-      profit: "0%", winRate: "0%", mdd: "0%",
-      status: "approved"
-    });
-    res.json({ success: true, message: "Trader Application Submitted Successfully!" });
-  } catch (err) { res.status(500).json({ success: false, message: "Failed to apply" }); }
-});
-
-// --- ✅ INVESTMENT ---
-app.post("/api/invest", auth, async (req, res) => {
-  try {
-    const { planId, amount } = req.body;
-    const user = await User.findById(req.user.id);
-    const numAmt = Number(amount);
-    if (user.balance < numAmt) return res.status(400).json({ success: false, message: "Insufficient balance" });
-
-    user.balance -= numAmt;
-    await user.save();
-
-    await Investment.create({ userId: user._id, planId, amount: numAmt });
-    await Transaction.create({
-      userId: user._id,
-      type: "investment",
-      amount: numAmt,
-      status: "approved",
-      details: `Invested in plan`
-    });
-
-    res.json({ success: true, message: "Investment Successful!", newBalance: user.balance });
-  } catch (err) { res.status(500).json({ success: false, message: "Investment failed" }); }
-});
-
-// --- ✅ TRADE FIX (Spot Buy/Sell & Futures Success Message Fix) ---
+// --- ✅ SPOT BUY/SELL FIX ---
 const handleTrade = async (req, res) => {
   try {
     const { amount, symbol, leverage, type, side } = req.body; 
@@ -151,15 +96,14 @@ const handleTrade = async (req, res) => {
     user.balance -= numAmt;
     await user.save();
 
-    // Logs এ ডাটা সেভ করা - Spot এবং Futures উভয়ই আলাদা ভাবে সেভ হবে
     await Transaction.create({
       userId: user._id,
       type: type || "spot",
       amount: numAmt,
-      symbol: symbol || "USDT",
+      symbol: symbol || "BTC",
       method: leverage ? `${leverage}x` : "Spot",
       status: "approved",
-      details: `${side || 'Buy'} ${type || 'Trade'} order for ${symbol || 'BTC'}`
+      details: `${side || 'Order'} ${type || 'Trade'} for ${symbol || 'Market'}`
     });
 
     res.json({ success: true, message: "Trade Successful!", newBalance: user.balance });
@@ -170,16 +114,16 @@ app.post("/api/futures/trade", auth, handleTrade);
 app.post("/api/trade", auth, handleTrade);
 app.post("/api/spot/trade", auth, handleTrade);
 
-// --- ✅ LOGS PAGE FIX (Empty Page Fix) ---
+// --- ✅ LOGS PAGE FIX (যাতে পেজ খালি না দেখায়) ---
 app.get("/api/transactions", auth, async (req, res) => {
   try {
-    // এখানে শুধু ডাটা না পাঠিয়ে একটি অবজেক্ট পাঠানো হচ্ছে যা ফ্রন্টএন্ড সহজে রিড করতে পারে
     const logs = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
-    res.json({ success: true, transactions: logs }); 
-  } catch (err) { res.status(500).json({ success: false, transactions: [] }); }
+    // ফ্রন্টএন্ড যাতে সব ফরমেটেই ডাটা পায় সে ব্যবস্থা করা হয়েছে
+    res.json(logs); 
+  } catch (err) { res.status(500).json([]); }
 });
 
-// --- ✅ ADMIN PANEL (Mobile/PC Visibility Fix) ---
+// --- ✅ ADMIN PANEL FIX ---
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select("-password").sort({ createdAt: -1 });
@@ -191,15 +135,11 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
 });
 
 // --- OTHERS ---
-app.get("/api/plans", async (req, res) => {
-  try { res.json(await Plan.find({ status: true })); } catch (err) { res.status(500).json([]); }
-});
-
 app.get("/api/traders/all", async (req, res) => {
   try { res.json(await Trader.find().sort({ createdAt: -1 })); } catch (err) { res.status(500).json([]); }
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 API Running on Port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 API Running`));
 
 export default app;
