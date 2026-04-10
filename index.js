@@ -9,6 +9,7 @@ dotenv.config();
 const app = express();
 
 /* ================= MIDDLEWARE ================= */
+// মোবাইলে এবং বিভিন্ন ডিভাইসে অ্যাডমিন প্যানেল ও এপিআই এক্সেস নিশ্চিত করতে CORS আপডেট করা হয়েছে
 app.use(cors({
   origin: true, 
   credentials: true,
@@ -35,7 +36,7 @@ const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema(
 
 const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  type: String, // trade, deposit, withdraw, investment, trader_application
+  type: String, 
   amount: Number, symbol: String, method: String, transactionId: String, status: { type: String, default: "pending" }, details: String 
 }, { timestamps: true }));
 
@@ -96,12 +97,11 @@ app.post("/api/login", async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- ✅ TRADER APPLICATION (Become a Lead Fix) ---
+// --- ✅ TRADER APPLICATION ---
 app.post("/api/traders/apply", auth, async (req, res) => {
   try {
     const { experience, capital } = req.body;
     const user = await User.findById(req.user.id);
-    // সরাসরি ট্রেডার লিস্টে সেভ করা
     await Trader.create({
       userId: user._id,
       name: user.name,
@@ -114,7 +114,7 @@ app.post("/api/traders/apply", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: "Failed to apply" }); }
 });
 
-// --- ✅ INVESTMENT (Investment Success Fix) ---
+// --- ✅ INVESTMENT ---
 app.post("/api/invest", auth, async (req, res) => {
   try {
     const { planId, amount } = req.body;
@@ -138,45 +138,59 @@ app.post("/api/invest", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: "Investment failed" }); }
 });
 
-// --- ✅ TRADE FIX (Spot & Futures Buy/Sell) ---
+// --- ✅ TRADE FIX (Spot Buy/Sell & Futures Success Message Fix) ---
 const handleTrade = async (req, res) => {
   try {
-    const { amount, symbol, leverage, type } = req.body; 
+    const { amount, symbol, leverage, type, side } = req.body; 
     const user = await User.findById(req.user.id);
     const numAmt = Number(amount);
-    if (user.balance < numAmt) return res.status(400).json({ success: false, message: "Low balance" });
+
+    if (!numAmt || numAmt <= 0) return res.status(400).json({ success: false, message: "অ্যামাউন্ট লিখুন" });
+    if (user.balance < numAmt) return res.status(400).json({ success: false, message: "ব্যালেন্স পর্যাপ্ত নয়" });
 
     user.balance -= numAmt;
     await user.save();
 
-    // Logs এ ডাটা সেভ করা
+    // Logs এ ডাটা সেভ করা - Spot এবং Futures উভয়ই আলাদা ভাবে সেভ হবে
     await Transaction.create({
       userId: user._id,
-      type: type || "trade",
+      type: type || "spot",
       amount: numAmt,
       symbol: symbol || "USDT",
       method: leverage ? `${leverage}x` : "Spot",
       status: "approved",
-      details: `${type} order for ${symbol}`
+      details: `${side || 'Buy'} ${type || 'Trade'} order for ${symbol || 'BTC'}`
     });
 
     res.json({ success: true, message: "Trade Successful!", newBalance: user.balance });
-  } catch (err) { res.status(500).json({ success: false }); }
+  } catch (err) { res.status(500).json({ success: false, message: "ট্রেড ব্যর্থ হয়েছে" }); }
 };
 
 app.post("/api/futures/trade", auth, handleTrade);
 app.post("/api/trade", auth, handleTrade);
 app.post("/api/spot/trade", auth, handleTrade);
 
-// --- ✅ LOGS PAGE FIX ---
+// --- ✅ LOGS PAGE FIX (Empty Page Fix) ---
 app.get("/api/transactions", auth, async (req, res) => {
   try {
+    // এখানে শুধু ডাটা না পাঠিয়ে একটি অবজেক্ট পাঠানো হচ্ছে যা ফ্রন্টএন্ড সহজে রিড করতে পারে
     const logs = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
-    res.json(logs);
-  } catch (err) { res.status(500).json([]); }
+    res.json({ success: true, transactions: logs }); 
+  } catch (err) { res.status(500).json({ success: false, transactions: [] }); }
 });
 
-// --- ADMIN & OTHERS ---
+// --- ✅ ADMIN PANEL (Mobile/PC Visibility Fix) ---
+app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
+  try {
+    const users = await User.find().select("-password").sort({ createdAt: -1 });
+    const requests = await Transaction.find().populate("userId", "name email").sort({ createdAt: -1 });
+    const traders = await Trader.find().sort({ createdAt: -1 });
+    const plans = await Plan.find();
+    res.json({ success: true, users, requests, traders, plans });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
+// --- OTHERS ---
 app.get("/api/plans", async (req, res) => {
   try { res.json(await Plan.find({ status: true })); } catch (err) { res.status(500).json([]); }
 });
@@ -185,17 +199,7 @@ app.get("/api/traders/all", async (req, res) => {
   try { res.json(await Trader.find().sort({ createdAt: -1 })); } catch (err) { res.status(500).json([]); }
 });
 
-app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
-  try {
-    const users = await User.find().select("-password");
-    const requests = await Transaction.find().populate("userId", "name email");
-    const traders = await Trader.find();
-    const plans = await Plan.find();
-    res.json({ success: true, users, requests, traders, plans });
-  } catch (err) { res.status(500).json({ success: false }); }
-});
-
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 API Running`));
+app.listen(PORT, () => console.log(`🚀 API Running on Port ${PORT}`));
 
 export default app;
