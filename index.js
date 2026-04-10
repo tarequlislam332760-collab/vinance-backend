@@ -34,7 +34,7 @@ const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema(
 
 const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  type: String, // spot, futures, investment
+  type: String, 
   amount: Number,
   symbol: String,
   method: String,
@@ -49,7 +49,7 @@ const Trader = mongoose.models.Trader || mongoose.model("Trader", new mongoose.S
   winRate: { type: String, default: "0%" },
   aum: String,
   experience: String,
-  status: { type: String, default: "approved" } // সরাসরি অ্যাপ্রুভড হবে যাতে অ্যাডমিন প্যানেলে দেখা যায়
+  status: { type: String, default: "approved" } 
 }, { timestamps: true }));
 
 /* ================= AUTH MIDDLEWARE ================= */
@@ -71,7 +71,12 @@ const adminAuth = (req, res, next) => {
 
 /* ================= ROUTES ================= */
 
-// --- LOGIN ---
+// ✅ HOME ROUTE (Fixes "Cannot GET /")
+app.get("/", (req, res) => {
+  res.send("🚀 Vinance API is Running Successfully!");
+});
+
+// --- AUTH ---
 app.post("/api/login", async (req, res) => {
   try {
     const user = await User.findOne({ email: req.body.email.toLowerCase().trim() });
@@ -83,7 +88,7 @@ app.post("/api/login", async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- ✅ SPOT BUY/SELL FIX (এখন এরর আসবে না) ---
+// --- SPOT/FUTURES TRADE ---
 app.post("/api/trade", auth, async (req, res) => {
   try {
     const { amount, symbol, side } = req.body;
@@ -101,7 +106,6 @@ app.post("/api/trade", auth, async (req, res) => {
 
     await user.save();
 
-    // ✅ Logs এ ডাটা সেভ করা (যাতে পেজ খালি না থাকে)
     await Transaction.create({
       userId: user._id,
       type: "spot",
@@ -111,13 +115,13 @@ app.post("/api/trade", auth, async (req, res) => {
       details: `${side.toUpperCase()} ${symbol || 'Market'}`
     });
 
-    res.json({ success: true, balance: user.balance, message: "ট্রেড সফল হয়েছে" });
+    res.json({ success: true, balance: user.balance, message: "ট্রেড সফল হয়েছে" });
   } catch (err) {
     res.status(500).json({ message: "ট্রেড এরর" });
   }
 });
 
-// --- ✅ TRADER APPLY (Become a Lead) ---
+// --- TRADER APPLY ---
 app.post("/api/traders/apply", auth, async (req, res) => {
   try {
     const exist = await Trader.findOne({ userId: req.user.id });
@@ -136,15 +140,15 @@ app.post("/api/traders/apply", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error" }); }
 });
 
-// --- ✅ LOGS PAGE FIX (Data showing) ---
+// --- LOGS PAGE ---
 app.get("/api/transactions", auth, async (req, res) => {
   try {
     const data = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
-    res.json(data); // সরাসরি ডাটা পাঠানো হচ্ছে যাতে ফ্রন্টএন্ড সহজে পায়
+    res.json(data); 
   } catch (err) { res.status(500).json([]); }
 });
 
-// --- ✅ ADMIN MANAGEMENT (Edit/Delete Trader) ---
+// --- ADMIN MANAGEMENT ---
 app.get("/api/admin/traders", auth, adminAuth, async (req, res) => {
   try {
     const traders = await Trader.find().sort({ createdAt: -1 });
