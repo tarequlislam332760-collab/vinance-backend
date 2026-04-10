@@ -70,21 +70,9 @@ const adminAuth = (req, res, next) => {
 };
 
 /* ================= ROUTES ================= */
-app.get("/", (req, res) => res.send("🚀 Vinance API V7 Live"));
+app.get("/", (req, res) => res.send("🚀 Vinance API V8 Live - All Systems Stable"));
 
 // --- AUTH ---
-app.post("/api/register", async (req, res) => {
-  try {
-    const { name, email, password } = req.body;
-    const normalizedEmail = email.toLowerCase().trim();
-    const existing = await User.findOne({ email: normalizedEmail });
-    if (existing) return res.status(400).json({ success: false, message: "Email exists" });
-    const hashedPassword = await bcrypt.hash(password, 10);
-    await User.create({ name, email: normalizedEmail, password: hashedPassword });
-    res.status(201).json({ success: true, message: "Success!" });
-  } catch (err) { res.status(500).json({ success: false }); }
-});
-
 app.post("/api/login", async (req, res) => {
   try {
     const user = await User.findOne({ email: req.body.email.toLowerCase().trim() });
@@ -96,54 +84,46 @@ app.post("/api/login", async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- ✅ SPOT/FUTURES BUY-SELL FIX ---
+// --- ✅ SPOT/FUTURES BUY-SELL (Fixed Response for Logs) ---
 const handleTrade = async (req, res) => {
   try {
     const { amount, symbol, leverage, type, side } = req.body; 
     const user = await User.findById(req.user.id);
     const numAmt = Number(amount);
 
-    if (isNaN(numAmt) || numAmt <= 0) return res.status(400).json({ success: false, message: "অ্যামাউন্ট লিখুন" });
-    if (user.balance < numAmt) return res.status(400).json({ success: false, message: "ব্যালেন্স পর্যাপ্ত নয়" });
+    if (!numAmt || numAmt <= 0) return res.status(400).json({ success: false, message: "সঠিক অ্যামাউন্ট দিন" });
+    if (user.balance < numAmt) return res.status(400).json({ success: false, message: "ব্যালেন্স পর্যাপ্ত নয়" });
 
     user.balance -= numAmt;
     await user.save();
 
-    // ✅ লগ তৈরি করা যাতে Logs Page খালি না দেখায়
+    // Create log entry immediately
     await Transaction.create({
       userId: user._id,
-      type: type || (leverage ? "futures" : "spot"),
+      type: leverage ? "futures" : "spot",
       amount: numAmt,
       symbol: symbol || "USDT",
       method: leverage ? `${leverage}x` : "Spot",
       status: "approved",
-      details: `${side || 'Order'} trade for ${symbol || 'Market'}`
+      details: `${side || 'Order'} ${type || 'Trade'} for ${symbol || 'Asset'}`
     });
 
     res.json({ success: true, message: "Trade Successful!", newBalance: user.balance });
   } catch (err) { 
-    console.error("Trade Error:", err);
-    res.status(500).json({ success: false, message: "ট্রেড ব্যর্থ হয়েছে" }); 
+    res.status(500).json({ success: false, message: "ট্রেড ব্যর্থ হয়েছে" }); 
   }
 };
 
 app.post("/api/futures/trade", auth, handleTrade);
 app.post("/api/spot/trade", auth, handleTrade);
+app.post("/api/trade", auth, handleTrade); // Backup route
 
-// --- ✅ LOGS PAGE FIX ---
-app.get("/api/transactions", auth, async (req, res) => {
-  try {
-    const logs = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
-    res.json(logs); 
-  } catch (err) { res.status(500).json([]); }
-});
-
-// --- ✅ BECOME A LEAD TRADER APPLICATION ---
+// --- ✅ BECOME A LEAD / TRADER APPLY (Fix Admin Visibility) ---
 app.post("/api/traders/apply", auth, async (req, res) => {
   try {
-    const { experience, capital } = req.body;
     const user = await User.findById(req.user.id);
-    
+    const { experience, capital } = req.body;
+
     const existing = await Trader.findOne({ userId: user._id });
     if(existing) return res.status(400).json({ success: false, message: "ইতিমধ্যেই আবেদন করেছেন" });
 
@@ -155,11 +135,19 @@ app.post("/api/traders/apply", auth, async (req, res) => {
       profit: "0%", winRate: "0%", mdd: "0%",
       status: "approved"
     });
-    res.json({ success: true, message: "Trader Success!" });
+    res.json({ success: true, message: "Trader Created Successfully!" });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- ✅ ADMIN PANEL (ALL DATA & TRADER MANAGEMENT) ---
+// --- ✅ LOGS PAGE FIX ---
+app.get("/api/transactions", auth, async (req, res) => {
+  try {
+    const logs = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
+    res.json(logs);
+  } catch (err) { res.status(500).json([]); }
+});
+
+// --- ✅ ADMIN TRADER MANAGEMENT (Edit/Delete) ---
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select("-password").sort({ createdAt: -1 });
@@ -170,15 +158,15 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// ✅ Admin: Edit Trader
+// Update Trader API
 app.put("/api/admin/update-trader/:id", auth, adminAuth, async (req, res) => {
   try {
     await Trader.findByIdAndUpdate(req.params.id, req.body);
-    res.json({ success: true, message: "Trader Updated!" });
+    res.json({ success: true, message: "Trader Updated Successfully" });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// ✅ Admin: Delete Trader
+// Delete Trader API
 app.delete("/api/admin/delete-trader/:id", auth, adminAuth, async (req, res) => {
   try {
     await Trader.findByIdAndDelete(req.params.id);
@@ -186,12 +174,16 @@ app.delete("/api/admin/delete-trader/:id", auth, adminAuth, async (req, res) => 
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- OTHERS ---
+// --- PUBLIC ---
 app.get("/api/traders/all", async (req, res) => {
   try { res.json(await Trader.find().sort({ createdAt: -1 })); } catch (err) { res.status(500).json([]); }
 });
 
+app.get("/api/plans", async (req, res) => {
+  try { res.json(await Plan.find({ status: true })); } catch (err) { res.status(500).json([]); }
+});
+
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 API Running`));
+app.listen(PORT, () => console.log(`🚀 API Active on Port ${PORT}`));
 
 export default app;
