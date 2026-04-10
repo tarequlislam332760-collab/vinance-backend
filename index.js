@@ -9,12 +9,26 @@ dotenv.config();
 const app = express();
 
 /* ================= MIDDLEWARE ================= */
+// CORS ফিক্স: নির্দিষ্ট অরিজিন দিতে হবে যাতে credentials কাজ করে
+const allowedOrigins = [
+  "https://vinance-frontend.vercel.app", 
+  "http://localhost:5173", 
+  "http://localhost:3000"
+];
+
 app.use(cors({
-  origin: "*", 
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
   credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE"],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
+
 app.use(express.json());
 
 /* ================= DB CONNECTION ================= */
@@ -32,137 +46,171 @@ const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema(
   balance: { type: Number, default: 0 }
 }, { timestamps: true }));
 
-const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  type: { type: String }, 
-  amount: Number, 
-  method: String, 
-  status: { type: String, default: "approved" }
-}, { timestamps: true }));
-
 const Plan = mongoose.models.Plan || mongoose.model("Plan", new mongoose.Schema({
   name: String, minAmount: Number, maxAmount: Number, profitPercent: Number, duration: Number, status: { type: Boolean, default: true }
 }));
 
-const Trader = mongoose.models.Trader || mongoose.model("Trader", new mongoose.Schema({
+const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  name: String, img: String, profit: String, winRate: String, status: { type: String, default: "approved" }
+  type: { type: String }, 
+  amount: Number, method: String, transactionId: String, status: { type: String, default: "pending" }
 }, { timestamps: true }));
 
-/* ================= AUTH MIDDLEWARE ================= */
+const Trader = mongoose.models.Trader || mongoose.model("Trader", new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  name: String, 
+  img: { type: String, default: "" },
+  profit: { type: String, default: "0%" },
+  winRate: { type: String, default: "0%" },
+  aum: { type: String, default: "$0" },
+  mdd: { type: String, default: "0%" },
+  chartData: { type: String, default: "[]" },
+  status: { type: String, default: "approved" } 
+}, { timestamps: true }));
+
+const Investment = mongoose.models.Investment || mongoose.model("Investment", new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  planId: { type: mongoose.Schema.Types.ObjectId, ref: "Plan" },
+  amount: Number, status: { type: String, default: "active" }
+}, { timestamps: true }));
+
+/* ================= AUTH MIDDLEWARES ================= */
 const auth = (req, res, next) => {
   try {
     const token = req.headers.authorization?.split(" ")[1];
-    if (!token) return res.status(401).json({ success: false, message: "No Token" });
-    req.user = jwt.verify(token, process.env.JWT_SECRET);
+    if (!token) return res.status(401).json({ success: false, message: "No Token Provided" });
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
     next();
   } catch (err) { res.status(401).json({ success: false, message: "Invalid Token" }); }
 };
 
 const adminAuth = (req, res, next) => {
-  if (req.user?.role === "admin") next();
-  else res.status(403).json({ success: false, message: "Admin access only" });
-};
-
-/* ================= TRADE LOGIC FIX ================= */
-
-// ✅ কমন ট্রেড ফাংশন (Spot এবং Future উভয়ের জন্য)
-const processTrade = async (req, res) => {
-  try {
-    const { amount, symbol, leverage, type, side } = req.body; 
-    const user = await User.findById(req.user.id);
-    const numAmount = Number(amount);
-    
-    if (!numAmount || numAmount <= 0) return res.status(400).json({ success: false, message: "সঠিক পরিমাণ লিখুন" });
-    
-    // ব্যালেন্স চেক (Buy বা Long এর ক্ষেত্রে ব্যালেন্স কাটা হবে)
-    if (user.balance < numAmount) return res.status(400).json({ success: false, message: "পর্যাপ্ত ব্যালেন্স নেই" });
-
-    // ব্যালেন্স আপডেট
-    user.balance -= numAmount;
-    await user.save();
-    
-    // ট্রানজেকশন রেকর্ড তৈরি
-    await Transaction.create({ 
-      userId: user._id, 
-      type: type || "spot", // spot or futures
-      amount: numAmount, 
-      status: "approved", 
-      method: `${side?.toUpperCase() || 'BUY'} ${symbol || 'Market'} ${leverage ? leverage + 'x' : ''}` 
-    });
-
-    res.json({ 
-      success: true, 
-      message: `${side?.toUpperCase() || 'Trade'} Successful!`, 
-      newBalance: user.balance 
-    });
-  } catch (err) { 
-    console.error(err);
-    res.status(500).json({ success: false, message: "ট্রেড সফল হয়নি!" }); 
+  if (req.user && req.user.role === "admin") {
+    next();
+  } else {
+    res.status(403).json({ success: false, message: "Admin access only" });
   }
 };
 
-// এই একটি রুট দিয়েই সব ধরণের ট্রেড হ্যান্ডেল হবে
-app.post("/api/futures/trade", auth, processTrade);
-app.post("/api/trade", auth, processTrade); // অতিরিক্ত রুট ব্যাকআপ হিসেবে
-
-/* ================= AUTH ROUTES ================= */
+/* ================= PUBLIC ROUTES ================= */
+app.get("/", (req, res) => res.send("🚀 Vinance API is running..."));
 
 app.post("/api/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
-    const existing = await User.findOne({ email: email.toLowerCase() });
-    if (existing) return res.status(400).json({ success: false, message: "User exists" });
+    const normalizedEmail = email.toLowerCase().trim();
+    const existing = await User.findOne({ email: normalizedEmail });
+    if (existing) return res.status(400).json({ success: false, message: "User already exists" });
     const hashedPassword = await bcrypt.hash(password, 10);
-    await User.create({ name, email: email.toLowerCase(), password: hashedPassword });
-    res.status(201).json({ success: true });
-  } catch (err) { res.status(500).json({ success: false }); }
+    const user = await User.create({ name, email: normalizedEmail, password: hashedPassword });
+    res.status(201).json({ success: true, message: "Registration successful" });
+  } catch (err) { res.status(500).json({ success: false, message: "Server Error" }); }
 });
 
 app.post("/api/login", async (req, res) => {
   try {
-    const user = await User.findOne({ email: req.body.email.toLowerCase() });
-    if (!user || !(await bcrypt.compare(req.body.password, user.password))) return res.status(400).json({ success: false, message: "Invalid credentials" });
+    const user = await User.findOne({ email: req.body.email.toLowerCase().trim() });
+    if (!user || !(await bcrypt.compare(req.body.password, user.password))) {
+      return res.status(400).json({ success: false, message: "Invalid credentials" });
+    }
     const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
-    res.json({ success: true, token, user: { _id: user._id, name: user.name, role: user.role, balance: user.balance } });
+    res.json({ 
+      success: true, 
+      token, 
+      user: { _id: user._id, name: user.name, email: user.email, role: user.role, balance: user.balance } 
+    });
+  } catch (err) { res.status(500).json({ success: false, message: "Login failed" }); }
+});
+
+/* ================= USER ROUTES ================= */
+app.get("/api/profile", auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id).select("-password");
+    res.json(user);
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-app.get("/api/profile", auth, async (req, res) => {
-  const user = await User.findById(req.user.id).select("-password");
-  res.json(user);
+app.post("/api/futures/trade", auth, async (req, res) => {
+  try {
+    const { amount, symbol, leverage, type } = req.body; 
+    const user = await User.findById(req.user.id);
+    const numAmount = Number(amount);
+    
+    if (user.balance < numAmount) return res.status(400).json({ success: false, message: "Insufficient Balance" });
+
+    user.balance -= numAmount;
+    await user.save();
+    
+    await Transaction.create({ 
+      userId: user._id, 
+      type: type || "futures", 
+      amount: numAmount, 
+      status: "approved", 
+      method: `${symbol || 'Market'} ${leverage ? leverage + 'x' : '(Spot)'}` 
+    });
+
+    res.json({ success: true, message: "Trade Successful!", newBalance: user.balance });
+  } catch (err) { res.status(500).json({ success: false, message: "Trade failed!" }); }
 });
 
-/* ================= OTHER ROUTES ================= */
-
-app.post("/api/deposit", auth, async (req, res) => {
-  await Transaction.create({ userId: req.user.id, type: "deposit", amount: Number(req.body.amount), method: req.body.method, transactionId: req.body.transactionId });
-  res.json({ success: true, message: "Deposit Submitted!" });
+app.get("/api/my-investments", auth, async (req, res) => {
+  try {
+    const logs = await Investment.find({ userId: req.user.id }).populate("planId");
+    res.json(logs);
+  } catch (err) { res.status(500).json([]); }
 });
 
-app.get("/api/transactions", auth, async (req, res) => {
-  const data = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
-  res.json(data);
+app.get("/api/traders/all", async (req, res) => {
+  try {
+    const traders = await Trader.find().sort({ createdAt: -1 });
+    res.json(traders);
+  } catch (err) { res.status(500).json([]); }
 });
 
-app.get("/api/plans", async (req, res) => res.json(await Plan.find({ status: true })));
+/* ================= ADMIN ROUTES ================= */
 
-/* ================= ADMIN ACTIONS ================= */
+// কনসোলে আসা ৪MD (404) এরর ফিক্স করতে এই রুটটি যোগ করা হয়েছে
+app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
+  try {
+    const newTrader = await Trader.create(req.body);
+    res.json({ success: true, message: "Trader Created Successfully!", trader: newTrader });
+  } catch (err) { res.status(500).json({ success: false, message: "Failed to create trader" }); }
+});
 
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
-  const users = await User.find().select("-password");
-  const requests = await Transaction.find().populate("userId", "name email");
-  res.json({ success: true, users, requests });
+  try {
+    const users = await User.find().select("-password").sort({ createdAt: -1 });
+    const requests = await Transaction.find().populate("userId", "name email").sort({ createdAt: -1 });
+    const traders = await Trader.find().sort({ createdAt: -1 });
+    const plans = await Plan.find();
+    res.json({ success: true, users, requests, traders, plans });
+  } catch (err) { res.status(500).json({ success: false }); }
 });
 
 app.post("/api/admin/update-balance", auth, adminAuth, async (req, res) => {
-  await User.findByIdAndUpdate(req.body.userId, { balance: Number(req.body.balance) });
-  res.json({ success: true, message: "Updated!" });
+  try {
+    const { userId, balance } = req.body;
+    await User.findByIdAndUpdate(userId, { balance: Number(balance) });
+    res.json({ success: true, message: "Balance Updated!" });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
+app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
+  try {
+    const { id, status } = req.body;
+    const trx = await Transaction.findById(id);
+    if (status === "approved" && trx.type === "deposit") {
+      await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
+    }
+    trx.status = status;
+    await trx.save();
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ success: false }); }
 });
 
 /* ================= START SERVER ================= */
-app.get("/", (req, res) => res.send("🚀 Vinance API Live"));
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 
 export default app;
