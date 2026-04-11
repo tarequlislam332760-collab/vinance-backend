@@ -44,8 +44,8 @@ const Plan = mongoose.models.Plan || mongoose.model("Plan", new mongoose.Schema(
 }));
 
 const Trader = mongoose.models.Trader || mongoose.model("Trader", new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", unique: true },
-  name: String, img: String, profit: { type: String, default: "0%" }, winRate: { type: String, default: "0%" }, aum: String, mdd: { type: String, default: "0%" }, experience: String, status: { type: String, default: "approved" } 
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  name: String, img: String, profit: String, winRate: String, aum: String, mdd: String, experience: String, status: { type: String, default: "approved" } 
 }, { timestamps: true }));
 
 const Investment = mongoose.models.Investment || mongoose.model("Investment", new mongoose.Schema({
@@ -72,21 +72,15 @@ const adminAuth = (req, res, next) => {
 /* ================= ROUTES ================= */
 app.get("/", (req, res) => res.send("🚀 Vinance API Live - Systems Stable"));
 
-// --- ✅ REGISTRATION ---
-app.post("/api/register", async (req, res) => {
+// --- ✅ PROFILE (Fixes 404 /api/profile) ---
+app.get("/api/profile", auth, async (req, res) => {
   try {
-    const { name, email, password } = req.body;
-    const cleanEmail = email.toLowerCase().trim();
-    const exists = await User.findOne({ email: cleanEmail });
-    if (exists) return res.status(400).json({ success: false, message: "User already exists" });
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-    await User.create({ name, email: cleanEmail, password: hashedPassword });
-    res.json({ success: true, message: "Registration Successful" });
+    const user = await User.findById(req.user.id).select("-password");
+    res.json(user);
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- ✅ LOGIN ---
+// --- AUTH ---
 app.post("/api/login", async (req, res) => {
   try {
     const user = await User.findOne({ email: req.body.email.toLowerCase().trim() });
@@ -98,13 +92,6 @@ app.post("/api/login", async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-app.get("/api/profile", auth, async (req, res) => {
-  try {
-    const user = await User.findById(req.user.id).select("-password");
-    res.json(user);
-  } catch (err) { res.status(500).json({ success: false }); }
-});
-
 // --- ✅ TRADE LOGIC ---
 const handleTrade = async (req, res) => {
   try {
@@ -113,7 +100,7 @@ const handleTrade = async (req, res) => {
     const numAmt = Number(amount);
 
     if (!numAmt || numAmt <= 0) return res.status(400).json({ success: false, message: "সঠিক অ্যামাউন্ট দিন" });
-    if (user.balance < numAmt) return res.status(400).json({ success: false, message: "ব্যালেন্স পর্যাপ্ত নয়" });
+    if (user.balance < numAmt) return res.status(400).json({ success: false, message: "ব্যালেন্স পর্যাপ্ত নয়" });
 
     user.balance -= numAmt;
     await user.save();
@@ -134,6 +121,7 @@ const handleTrade = async (req, res) => {
 
 app.post("/api/futures/trade", auth, handleTrade);
 app.post("/api/spot/trade", auth, handleTrade);
+app.post("/api/trade", auth, handleTrade);
 
 // --- ✅ TRADER APPLY ---
 app.post("/api/traders/apply", auth, async (req, res) => {
@@ -153,7 +141,7 @@ app.post("/api/traders/apply", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- ✅ LOGS & ADMIN ---
+// --- ✅ LOGS & WITHDRAW FIX ---
 app.get("/api/transactions", auth, async (req, res) => {
   try {
     const logs = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
@@ -161,15 +149,45 @@ app.get("/api/transactions", auth, async (req, res) => {
   } catch (err) { res.status(500).json([]); }
 });
 
+app.get("/api/withdraw", auth, async (req, res) => {
+  try {
+    const logs = await Transaction.find({ userId: req.user.id, type: "withdraw" }).sort({ createdAt: -1 });
+    res.json(logs);
+  } catch (err) { res.status(500).json([]); }
+});
+
+app.get("/api/my-investments", auth, async (req, res) => {
+  try {
+    const investments = await Investment.find({ userId: req.user.id }).populate("planId");
+    res.json(investments);
+  } catch (err) { res.status(500).json([]); }
+});
+
+// --- ✅ ADMIN ---
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select("-password");
-    const requests = await Transaction.find().populate("userId", "name email").sort({ createdAt: -1 });
-    const traders = await Trader.find().sort({ createdAt: -1 });
+    const requests = await Transaction.find().populate("userId", "name email");
+    const traders = await Trader.find();
     res.json({ success: true, users, requests, traders });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
+app.put("/api/admin/update-trader/:id", auth, adminAuth, async (req, res) => {
+  try {
+    await Trader.findByIdAndUpdate(req.params.id, req.body);
+    res.json({ success: true, message: "Updated" });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
+app.delete("/api/admin/delete-trader/:id", auth, adminAuth, async (req, res) => {
+  try {
+    await Trader.findByIdAndDelete(req.params.id);
+    res.json({ success: true, message: "Deleted" });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
+// --- PUBLIC ---
 app.get("/api/traders/all", async (req, res) => {
   try { res.json(await Trader.find().sort({ createdAt: -1 })); } catch (err) { res.status(500).json([]); }
 });
@@ -177,4 +195,4 @@ app.get("/api/traders/all", async (req, res) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 API Active on Port ${PORT}`));
 
-export default app;
+export default app; 
