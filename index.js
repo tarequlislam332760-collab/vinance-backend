@@ -24,7 +24,6 @@ mongoose.connect(dbURI)
   .catch(err => console.error("❌ Database Connection Error:", err));
 
 /* ================= MODELS ================= */
-// মডেলগুলো পুনরায় ডিফাইন করা হয়েছে যাতে কোনো কনফ্লিক্ট না থাকে
 const UserSchema = new mongoose.Schema({
   name: { type: String, required: true }, 
   email: { type: String, unique: true, required: true, lowercase: true, trim: true }, 
@@ -70,7 +69,7 @@ const auth = (req, res, next) => {
 
 app.get("/", (req, res) => res.send("🚀 Vinance API Live and Stable"));
 
-// --- ✅ রেজিস্ট্রেশন (Fixed) ---
+// --- ✅ রেজিস্ট্রেশন (বক্রিপ্ট ফিক্সড) ---
 app.post("/api/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -80,17 +79,20 @@ app.post("/api/register", async (req, res) => {
     const exists = await User.findOne({ email: cleanEmail });
     if (exists) return res.status(400).json({ success: false, message: "ইমেইলটি আগে থেকেই ব্যবহৃত" });
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const newUser = await User.create({ name, email: cleanEmail, password: hashedPassword });
+    // পাসওয়ার্ড হ্যাশিং
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    await User.create({ name, email: cleanEmail, password: hashedPassword });
     
     res.json({ success: true, message: "Registration successful" });
   } catch (err) {
     console.error("Register Error:", err);
-    res.status(500).json({ success: false, message: "রেজিস্ট্রেশন ব্যর্থ হয়েছে" });
+    res.status(500).json({ success: false, message: "রেজিস্ট্রেশন ব্যর্থ হয়েছে" });
   }
 });
 
-// --- ✅ লগইন (Fixed) ---
+// --- ✅ লগইন (পাসওয়ার্ড ম্যাচিং ফিক্সড) ---
 app.post("/api/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -98,12 +100,19 @@ app.post("/api/login", async (req, res) => {
 
     const cleanEmail = email.toLowerCase().trim();
     const user = await User.findOne({ email: cleanEmail });
+    
     if (!user) return res.status(400).json({ success: false, message: "ইউজার পাওয়া যায়নি" });
 
+    // পাসওয়ার্ড চেক
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) return res.status(400).json({ success: false, message: "পাসওয়ার্ড ভুল" });
 
-    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
+    // টোকেন তৈরি
+    const token = jwt.sign(
+      { id: user._id, role: user.role }, 
+      process.env.JWT_SECRET || "fallback_secret", 
+      { expiresIn: "7d" }
+    );
 
     res.json({ 
       success: true, 
@@ -112,7 +121,7 @@ app.post("/api/login", async (req, res) => {
     });
   } catch (err) {
     console.error("Login Error:", err);
-    res.status(500).json({ success: false, message: "লগইন ব্যর্থ হয়েছে" });
+    res.status(500).json({ success: false, message: "সার্ভার এরর" });
   }
 });
 
@@ -129,7 +138,7 @@ app.post("/api/futures/trade", auth, async (req, res) => {
   try {
     const { amount, symbol, side } = req.body; 
     const user = await User.findById(req.user.id);
-    if (user.balance < Number(amount)) return res.status(400).json({ message: "Check balance" });
+    if (user.balance < Number(amount)) return res.status(400).json({ message: "Low balance" });
 
     user.balance -= Number(amount);
     await user.save();
