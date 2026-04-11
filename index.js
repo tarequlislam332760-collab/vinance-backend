@@ -24,7 +24,7 @@ const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema(
   email: { type: String, unique: true, required: true, lowercase: true }, 
   password: { type: String, required: true }, 
   role: { type: String, default: "user" }, 
-  balance: { type: Number, default: 5000 } // রেজিস্ট্রেশন বোনাস ৫০০০
+  balance: { type: Number, default: 5000 }
 }, { timestamps: true }));
 
 const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
@@ -74,10 +74,14 @@ app.post("/api/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
     const exists = await User.findOne({ email: email.toLowerCase() });
-    if (exists) return res.status(400).json({ success: false, message: "Email Exists" });
+    if (exists) return res.status(400).json({ success: false, message: "ইমেইলটি ব্যবহৃত হচ্ছে" });
+
     const hashedPassword = await bcrypt.hash(password, 10);
-    await User.create({ name, email: email.toLowerCase(), password: hashedPassword, balance: 5000 });
-    res.json({ success: true, message: "Registration successful" });
+    const userCount = await User.countDocuments();
+    const role = userCount === 0 ? "admin" : "user";
+
+    await User.create({ name, email: email.toLowerCase(), password: hashedPassword, balance: 5000, role });
+    res.json({ success: true, message: "রেজিস্ট্রেশন সফল হয়েছে" });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
@@ -85,26 +89,29 @@ app.post("/api/login", async (req, res) => {
   try {
     const user = await User.findOne({ email: req.body.email.toLowerCase().trim() });
     if (!user || !(await bcrypt.compare(req.body.password, user.password))) {
-      return res.status(400).json({ success: false, message: "Wrong Details" });
+      return res.status(400).json({ success: false, message: "ভুল তথ্য" });
     }
     const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
-    res.json({ success: true, token, user });
+    res.json({ success: true, token, user: { _id: user._id, name: user.name, email: user.email, role: user.role, balance: user.balance } });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
 app.get("/api/profile", auth, async (req, res) => {
-  const user = await User.findById(req.user.id).select("-password");
-  res.json(user);
+  try {
+    const user = await User.findById(req.user.id).select("-password");
+    res.json(user);
+  } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- ✅ PROBLEM 5: TRADE LOGIC (ট্রেড সফল হয়নি সমাধান) ---
+// --- ✅ FIX 5: ট্রেড সফল মেসেজ ও লজিক ---
 const handleTrade = async (req, res) => {
   try {
-    const { amount, symbol, leverage, side } = req.body; 
+    const { amount, symbol, leverage, side, type } = req.body; 
     const user = await User.findById(req.user.id);
     const numAmt = Number(amount);
 
-    if (user.balance < numAmt) return res.status(400).json({ success: false, message: "Insufficient Balance" });
+    if (!numAmt || numAmt <= 0) return res.status(400).json({ success: false, message: "সঠিক অ্যামাউন্ট দিন" });
+    if (user.balance < numAmt) return res.status(400).json({ success: false, message: "ব্যালেন্স নেই" });
 
     user.balance -= numAmt;
     await user.save();
@@ -113,101 +120,94 @@ const handleTrade = async (req, res) => {
       userId: user._id,
       type: leverage ? "futures" : "spot",
       amount: numAmt,
-      symbol: symbol || "USDT",
+      symbol: symbol || "BTC",
       status: "approved",
-      details: `${side || 'Buy'} Trade`
+      details: `${side || 'Buy'} ${type || 'Market'} Trade ${leverage ? leverage+'x' : ''}`
     });
 
-    res.json({ success: true, message: "Trade Successful!", newBalance: user.balance });
-  } catch (err) { res.status(500).json({ success: false, message: "ট্রেড সফল হয়নি" }); }
+    res.json({ success: true, message: "ট্রেড সফল হয়েছে!", newBalance: user.balance });
+  } catch (err) { res.status(500).json({ success: false, message: "সার্ভার এরর" }); }
 };
 
 app.post("/api/futures/trade", auth, handleTrade);
 app.post("/api/spot/trade", auth, handleTrade);
+app.post("/api/trade", auth, handleTrade);
 
-// --- ✅ PROBLEM 4: BECOME A LEAD (ছবি অনুযায়ী সমাধান) ---
+// --- ✅ FIX 4: TRADER CREATE (Become a Lead) ---
 app.post("/api/traders/apply", auth, async (req, res) => {
   try {
-    const { experience, capital } = req.body;
     const user = await User.findById(req.user.id);
-    
-    // ট্রেডার হিসেবে ডাটাবেসে সেভ করা
+    const exists = await Trader.findOne({ userId: req.user.id });
+    if (exists) return res.status(400).json({ success: false, message: "আপনি ইতিমধ্যে আবেদন করেছেন" });
+
     await Trader.create({
-      userId: user._id,
+      userId: req.user.id,
       name: user.name,
-      experience: experience || "1 Year",
-      aum: capital || "500",
+      experience: req.body.experience,
+      aum: `$${req.body.capital || 0}`,
       status: "approved"
     });
-
-    res.json({ success: true, message: "Application Submitted Successfully!" });
+    res.json({ success: true, message: "আবেদন সফল হয়েছে!" });
   } catch (err) { res.status(500).json({ success: false, message: "Failed to create trader" }); }
 });
 
-// --- ✅ PROBLEM 3: INVESTMENT (Action failed সমাধান) ---
-app.post("/api/invest", auth, async (req, res) => {
+// --- LOGS ---
+app.get("/api/transactions", auth, async (req, res) => {
   try {
-    const { planId, amount } = req.body;
-    const user = await User.findById(req.user.id);
-    if (user.balance < amount) return res.status(400).json({ success: false, message: "Low Balance" });
-
-    user.balance -= amount;
-    await user.save();
-    
-    await Investment.create({ userId: user._id, planId, amount });
-    await Transaction.create({ userId: user._id, type: "investment", amount, status: "approved", details: "Plan Investment" });
-
-    res.json({ success: true, message: "Investment Successful" });
-  } catch (err) { res.status(500).json({ success: false, message: "Action failed!" }); }
+    const logs = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
+    res.json(logs);
+  } catch (err) { res.status(500).json([]); }
 });
 
-// --- ADMIN SECTION ---
-
-// ✅ PROBLEM 1: Create Plan
-app.post("/api/admin/create-plan", auth, adminAuth, async (req, res) => {
-  try {
-    const newPlan = await Plan.create(req.body);
-    res.json({ success: true, message: "Plan Created Successfully", plan: newPlan });
-  } catch (err) { res.status(500).json({ success: false, message: "Failed to create plan" }); }
-});
-
-// ✅ PROBLEM 2: Update Balance
-app.put("/api/admin/update-balance/:id", auth, adminAuth, async (req, res) => {
-  try {
-    const { balance } = req.body;
-    await User.findByIdAndUpdate(req.params.id, { balance: Number(balance) });
-    res.json({ success: true, message: "Balance Updated Successfully" });
-  } catch (err) { res.status(500).json({ success: false, message: "Error updating balance" }); }
-});
-
-// ✅ All Admin Data
+// --- ✅ FIX 1, 2, 3: ADMIN CONTROLS (Balance, Transaction, Plan) ---
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
-    const users = await User.find().select("-password");
+    const users = await User.find().sort({ createdAt: -1 });
     const requests = await Transaction.find().populate("userId", "name email").sort({ createdAt: -1 });
-    const traders = await Trader.find();
+    const traders = await Trader.find().sort({ createdAt: -1 });
     const plans = await Plan.find();
     res.json({ success: true, users, requests, traders, plans });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- PUBLIC DATA ---
-app.get("/api/plans", async (req, res) => {
-  const plans = await Plan.find({ status: true });
-  res.json(plans);
+// ব্যালেন্স আপডেট ফিক্স
+app.put("/api/admin/update-balance/:id", auth, adminAuth, async (req, res) => {
+  try {
+    const user = await User.findByIdAndUpdate(req.params.id, { balance: req.body.balance }, { new: true });
+    res.json({ success: true, message: "ব্যালেন্স আপডেট হয়েছে", user });
+  } catch (err) { res.status(500).json({ success: false, message: "Error updating balance" }); }
 });
 
+// ট্রানজেকশন অ্যাকশন ফিক্স
+app.put("/api/admin/transaction/:id", auth, adminAuth, async (req, res) => {
+  try {
+    const { status } = req.body;
+    const trx = await Transaction.findById(req.params.id);
+    if (!trx) return res.status(404).json({ success: false, message: "Transaction not found" });
+
+    if (status === "approved" && trx.type === "deposit" && trx.status !== "approved") {
+      await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
+    }
+    trx.status = status;
+    await trx.save();
+    res.json({ success: true, message: "Action Successful" });
+  } catch (err) { res.status(500).json({ success: false, message: "Action failed!" }); }
+});
+
+// প্ল্যান ক্রিয়েট ফিক্স
+app.post("/api/admin/create-plan", auth, adminAuth, async (req, res) => {
+  try {
+    const plan = await Plan.create(req.body);
+    res.json({ success: true, message: "Plan Created", plan });
+  } catch (err) { res.status(500).json({ success: false, message: "Failed to create plan" }); }
+});
+
+// --- PUBLIC ---
 app.get("/api/traders/all", async (req, res) => {
-  const traders = await Trader.find().sort({ createdAt: -1 });
-  res.json(traders);
-});
-
-app.get("/api/transactions", auth, async (req, res) => {
-  const logs = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
-  res.json(logs);
+  try { res.json(await Trader.find().sort({ createdAt: -1 })); } catch (err) { res.status(500).json([]); }
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 API on Port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 API Active on Port ${PORT}`));
 
 export default app;
