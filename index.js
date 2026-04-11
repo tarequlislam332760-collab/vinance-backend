@@ -18,13 +18,13 @@ app.use(cors({
 app.use(express.json());
 
 /* ================= DB CONNECTION ================= */
-// নিশ্চিত করুন আপনার Vercel settings-এ MONGO_URI দেওয়া আছে
 const dbURI = process.env.MONGO_URI || process.env.MONGODB_URI;
 mongoose.connect(dbURI)
   .then(() => console.log("✅ Database Connected"))
   .catch(err => console.error("❌ Database Connection Error:", err));
 
 /* ================= MODELS ================= */
+// মডেলগুলো পুনরায় ডিফাইন করা হয়েছে যাতে কোনো কনফ্লিক্ট না থাকে
 const UserSchema = new mongoose.Schema({
   name: { type: String, required: true }, 
   email: { type: String, unique: true, required: true, lowercase: true, trim: true }, 
@@ -68,7 +68,7 @@ const auth = (req, res, next) => {
 
 /* ================= ROUTES ================= */
 
-app.get("/", (req, res) => res.send("🚀 Vinance API Live"));
+app.get("/", (req, res) => res.send("🚀 Vinance API Live and Stable"));
 
 // --- ✅ রেজিস্ট্রেশন (Fixed) ---
 app.post("/api/register", async (req, res) => {
@@ -86,7 +86,7 @@ app.post("/api/register", async (req, res) => {
     res.json({ success: true, message: "Registration successful" });
   } catch (err) {
     console.error("Register Error:", err);
-    res.status(500).json({ success: false, message: "সার্ভার এরর" });
+    res.status(500).json({ success: false, message: "রেজিস্ট্রেশন ব্যর্থ হয়েছে" });
   }
 });
 
@@ -94,16 +94,15 @@ app.post("/api/register", async (req, res) => {
 app.post("/api/login", async (req, res) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ success: false, message: "ইমেইল এবং পাসওয়ার্ড দিন" });
+    if (!email || !password) return res.status(400).json({ success: false, message: "ইমেইল এবং পাসওয়ার্ড দিন" });
 
     const cleanEmail = email.toLowerCase().trim();
     const user = await User.findOne({ email: cleanEmail });
-    if (!user) return res.status(400).json({ success: false, message: "ইউজার পাওয়া যায়নি" });
+    if (!user) return res.status(400).json({ success: false, message: "ইউজার পাওয়া যায়নি" });
 
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ success: false, message: "পাসওয়ার্ড ভুল" });
+    if (!isMatch) return res.status(400).json({ success: false, message: "পাসওয়ার্ড ভুল" });
 
-    // টোকেন তৈরি (JWT_SECRET অবশ্যই Vercel env-এ থাকতে হবে)
     const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
 
     res.json({ 
@@ -113,7 +112,7 @@ app.post("/api/login", async (req, res) => {
     });
   } catch (err) {
     console.error("Login Error:", err);
-    res.status(500).json({ success: false, message: "লগইন ব্যর্থ হয়েছে" });
+    res.status(500).json({ success: false, message: "লগইন ব্যর্থ হয়েছে" });
   }
 });
 
@@ -125,10 +124,10 @@ app.get("/api/profile", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- ট্রেড, ডিপোজিট, উইথড্র (আগের মতোই) ---
+// --- ট্রেড, ডিপোজিট, উইথড্র ---
 app.post("/api/futures/trade", auth, async (req, res) => {
   try {
-    const { amount, symbol, leverage, side } = req.body; 
+    const { amount, symbol, side } = req.body; 
     const user = await User.findById(req.user.id);
     if (user.balance < Number(amount)) return res.status(400).json({ message: "Check balance" });
 
@@ -159,8 +158,13 @@ app.post("/api/withdraw", auth, async (req, res) => {
 });
 
 // --- পাবলিক ডাটা ---
-app.get("/api/plans", async (req, res) => res.json(await Plan.find()));
-app.get("/api/traders/all", async (req, res) => res.json(await Trader.find()));
+app.get("/api/plans", async (req, res) => {
+  try { res.json(await Plan.find()); } catch (err) { res.status(500).json([]); }
+});
+
+app.get("/api/traders/all", async (req, res) => {
+  try { res.json(await Trader.find()); } catch (err) { res.status(500).json([]); }
+});
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 API on Port ${PORT}`));
