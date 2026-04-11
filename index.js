@@ -35,7 +35,7 @@ const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema(
 
 const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  type: String, 
+  type: String, // deposit, withdraw, spot, futures
   amount: Number, symbol: String, method: String, transactionId: String, status: { type: String, default: "pending" }, details: String 
 }, { timestamps: true }));
 
@@ -70,9 +70,8 @@ const adminAuth = (req, res, next) => {
 };
 
 /* ================= ROUTES ================= */
-app.get("/", (req, res) => res.send("🚀 Vinance API Live - Systems Stable"));
+app.get("/", (req, res) => res.send("🚀 Vinance API Live - All Fixes Applied"));
 
-// --- ✅ PROFILE (Fixes 404 /api/profile) ---
 app.get("/api/profile", auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select("-password");
@@ -92,7 +91,7 @@ app.post("/api/login", async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- ✅ TRADE LOGIC ---
+// --- ✅ TRADE LOGIC (Balance Update Fix) ---
 const handleTrade = async (req, res) => {
   try {
     const { amount, symbol, leverage, type, side } = req.body; 
@@ -100,9 +99,14 @@ const handleTrade = async (req, res) => {
     const numAmt = Number(amount);
 
     if (!numAmt || numAmt <= 0) return res.status(400).json({ success: false, message: "সঠিক অ্যামাউন্ট দিন" });
-    if (user.balance < numAmt) return res.status(400).json({ success: false, message: "ব্যালেন্স পর্যাপ্ত নয়" });
-
-    user.balance -= numAmt;
+    
+    if (side?.toLowerCase() === "buy") {
+       if (user.balance < numAmt) return res.status(400).json({ success: false, message: "ব্যালেন্স পর্যাপ্ত নয়" });
+       user.balance -= numAmt;
+    } else {
+       user.balance += numAmt;
+    }
+    
     await user.save();
 
     await Transaction.create({
@@ -115,33 +119,71 @@ const handleTrade = async (req, res) => {
       details: `${side || 'Order'} ${type || 'Trade'} for ${symbol || 'Asset'}`
     });
 
-    res.json({ success: true, message: "Trade Successful!", newBalance: user.balance });
-  } catch (err) { res.status(500).json({ success: false }); }
+    res.json({ success: true, message: "Trade Successful!", balance: user.balance });
+  } catch (err) { res.status(500).json({ success: false, message: "Error updating balance" }); }
 };
 
 app.post("/api/futures/trade", auth, handleTrade);
 app.post("/api/spot/trade", auth, handleTrade);
 app.post("/api/trade", auth, handleTrade);
 
-// --- ✅ TRADER APPLY ---
+// --- ✅ DEPOSIT & WITHDRAW FIX ---
+app.post("/api/deposit", auth, async (req, res) => {
+  try {
+    const { amount, method, transactionId } = req.body;
+    await Transaction.create({
+      userId: req.user.id,
+      type: "deposit",
+      amount: Number(amount),
+      method,
+      transactionId,
+      status: "pending",
+      details: "Deposit request submitted"
+    });
+    res.json({ success: true, message: "Request submitted" });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
+app.post("/api/withdraw", auth, async (req, res) => {
+  try {
+    const { amount, method, details } = req.body;
+    const user = await User.findById(req.user.id);
+    if (user.balance < Number(amount)) return res.status(400).json({ message: "Insufficient balance" });
+    
+    user.balance -= Number(amount);
+    await user.save();
+
+    await Transaction.create({
+      userId: user._id,
+      type: "withdraw",
+      amount: Number(amount),
+      method,
+      status: "pending",
+      details: details || "Withdrawal request"
+    });
+    res.json({ success: true, message: "Withdrawal submitted" });
+  } catch (err) { res.status(500).json({ success: false, message: "Withdrawal failed" }); }
+});
+
+// --- ✅ TRADER APPLY (Already Applied Fix) ---
 app.post("/api/traders/apply", auth, async (req, res) => {
   try {
-    const user = await User.findById(req.user.id);
-    const existing = await Trader.findOne({ userId: user._id });
-    if(existing) return res.status(400).json({ success: false, message: "ইতিমধ্যেই আবেদন করেছেন" });
+    const existing = await Trader.findOne({ userId: req.user.id });
+    if(existing) return res.status(200).json({ success: true, message: "ইতিমধ্যেই আবেদন করেছেন" });
 
+    const user = await User.findById(req.user.id);
     await Trader.create({
       userId: user._id,
       name: user.name,
       experience: req.body.experience || "Expert",
-      aum: `$${req.body.capital || 0}`,
+      aum: `$${req.body.capital || req.body.aum || 0}`,
       status: "approved"
     });
     res.json({ success: true, message: "Trader Created" });
-  } catch (err) { res.status(500).json({ success: false }); }
+  } catch (err) { res.status(500).json({ success: false, message: "Failed to create trader" }); }
 });
 
-// --- ✅ LOGS & WITHDRAW FIX ---
+// --- LOGS ---
 app.get("/api/transactions", auth, async (req, res) => {
   try {
     const logs = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
@@ -149,25 +191,11 @@ app.get("/api/transactions", auth, async (req, res) => {
   } catch (err) { res.status(500).json([]); }
 });
 
-app.get("/api/withdraw", auth, async (req, res) => {
-  try {
-    const logs = await Transaction.find({ userId: req.user.id, type: "withdraw" }).sort({ createdAt: -1 });
-    res.json(logs);
-  } catch (err) { res.status(500).json([]); }
-});
-
-app.get("/api/my-investments", auth, async (req, res) => {
-  try {
-    const investments = await Investment.find({ userId: req.user.id }).populate("planId");
-    res.json(investments);
-  } catch (err) { res.status(500).json([]); }
-});
-
-// --- ✅ ADMIN ---
+// --- ADMIN ---
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select("-password");
-    const requests = await Transaction.find().populate("userId", "name email");
+    const requests = await Transaction.find().populate("userId", "name email").sort({ createdAt: -1 });
     const traders = await Trader.find();
     res.json({ success: true, users, requests, traders });
   } catch (err) { res.status(500).json({ success: false }); }
@@ -187,7 +215,6 @@ app.delete("/api/admin/delete-trader/:id", auth, adminAuth, async (req, res) => 
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- PUBLIC ---
 app.get("/api/traders/all", async (req, res) => {
   try { res.json(await Trader.find().sort({ createdAt: -1 })); } catch (err) { res.status(500).json([]); }
 });
@@ -195,4 +222,4 @@ app.get("/api/traders/all", async (req, res) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 API Active on Port ${PORT}`));
 
-export default app; 
+export default app;
