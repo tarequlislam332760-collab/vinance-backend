@@ -72,23 +72,61 @@ const adminAuth = (req, res, next) => {
 /* ================= ROUTES ================= */
 app.get("/", (req, res) => res.send("🚀 Vinance API Live - Systems Stable"));
 
-// --- ✅ PROFILE (Fixes 404 /api/profile) ---
+// --- ✅ REGISTER (নতুন যোগ করা হয়েছে) ---
+app.post("/api/register", async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+    if (!name || !email || !password) return res.status(400).json({ success: false, message: "সব তথ্য দিন" });
+
+    const cleanEmail = email.toLowerCase().trim();
+    const exists = await User.findOne({ email: cleanEmail });
+    if (exists) return res.status(400).json({ success: false, message: "ইমেইলটি আগে থেকেই ব্যবহৃত" });
+
+    // পাসওয়ার্ড হ্যাশ করা হচ্ছে
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    await User.create({ name, email: cleanEmail, password: hashedPassword });
+    res.json({ success: true, message: "Registration successful" });
+  } catch (err) {
+    console.error("Register Error:", err);
+    res.status(500).json({ success: false, message: "রেজিস্ট্রেশন ব্যর্থ হয়েছে" });
+  }
+});
+
+// --- ✅ LOGIN (পাসওয়ার্ড চেক আপডেট করা হয়েছে) ---
+app.post("/api/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const cleanEmail = email.toLowerCase().trim();
+    const user = await User.findOne({ email: cleanEmail });
+
+    if (!user) {
+      return res.status(400).json({ success: false, message: "ইউজার পাওয়া যায়নি" });
+    }
+
+    // পাসওয়ার্ড ম্যাচিং চেক
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ success: false, message: "পাসওয়ার্ড ভুল" });
+    }
+
+    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
+    res.json({ 
+      success: true, 
+      token, 
+      user: { _id: user._id, name: user.name, email: user.email, role: user.role, balance: user.balance } 
+    });
+  } catch (err) {
+    console.error("Login Error:", err);
+    res.status(500).json({ success: false, message: "সার্ভার এরর" });
+  }
+});
+
 app.get("/api/profile", auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select("-password");
     res.json(user);
-  } catch (err) { res.status(500).json({ success: false }); }
-});
-
-// --- AUTH ---
-app.post("/api/login", async (req, res) => {
-  try {
-    const user = await User.findOne({ email: req.body.email.toLowerCase().trim() });
-    if (!user || !(await bcrypt.compare(req.body.password, user.password))) {
-      return res.status(400).json({ success: false, message: "Wrong details" });
-    }
-    const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
-    res.json({ success: true, token, user: { _id: user._id, name: user.name, email: user.email, role: user.role, balance: user.balance } });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
@@ -121,7 +159,6 @@ const handleTrade = async (req, res) => {
 
 app.post("/api/futures/trade", auth, handleTrade);
 app.post("/api/spot/trade", auth, handleTrade);
-app.post("/api/trade", auth, handleTrade);
 
 // --- ✅ TRADER APPLY ---
 app.post("/api/traders/apply", auth, async (req, res) => {
@@ -141,7 +178,7 @@ app.post("/api/traders/apply", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- ✅ LOGS & WITHDRAW FIX ---
+// --- ✅ LOGS & ADMIN ---
 app.get("/api/transactions", auth, async (req, res) => {
   try {
     const logs = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
@@ -149,21 +186,6 @@ app.get("/api/transactions", auth, async (req, res) => {
   } catch (err) { res.status(500).json([]); }
 });
 
-app.get("/api/withdraw", auth, async (req, res) => {
-  try {
-    const logs = await Transaction.find({ userId: req.user.id, type: "withdraw" }).sort({ createdAt: -1 });
-    res.json(logs);
-  } catch (err) { res.status(500).json([]); }
-});
-
-app.get("/api/my-investments", auth, async (req, res) => {
-  try {
-    const investments = await Investment.find({ userId: req.user.id }).populate("planId");
-    res.json(investments);
-  } catch (err) { res.status(500).json([]); }
-});
-
-// --- ✅ ADMIN ---
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select("-password");
@@ -173,21 +195,6 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-app.put("/api/admin/update-trader/:id", auth, adminAuth, async (req, res) => {
-  try {
-    await Trader.findByIdAndUpdate(req.params.id, req.body);
-    res.json({ success: true, message: "Updated" });
-  } catch (err) { res.status(500).json({ success: false }); }
-});
-
-app.delete("/api/admin/delete-trader/:id", auth, adminAuth, async (req, res) => {
-  try {
-    await Trader.findByIdAndDelete(req.params.id);
-    res.json({ success: true, message: "Deleted" });
-  } catch (err) { res.status(500).json({ success: false }); }
-});
-
-// --- PUBLIC ---
 app.get("/api/traders/all", async (req, res) => {
   try { res.json(await Trader.find().sort({ createdAt: -1 })); } catch (err) { res.status(500).json([]); }
 });
@@ -195,4 +202,4 @@ app.get("/api/traders/all", async (req, res) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 API Active on Port ${PORT}`));
 
-export default app; 
+export default app;
