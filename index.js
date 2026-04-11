@@ -205,4 +205,4 @@ app.post("/api/traders/become-lead", auth, async (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 API on Port ${PORT}`));
-export default app; 
+export default app;
