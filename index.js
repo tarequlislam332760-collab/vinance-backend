@@ -10,7 +10,7 @@ const app = express();
 
 /* ================= MIDDLEWARE ================= */
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json());
+app.use(express.json({ limit: '50mb' })); // ছবি আপলোডের জন্য লিমিট বাড়ানো হয়েছে
 
 /* ================= DB CONNECTION ================= */
 const dbURI = process.env.MONGO_URI || process.env.MONGODB_URI;
@@ -19,14 +19,16 @@ mongoose.connect(dbURI)
   .catch(err => console.error("❌ Database Connection Error:", err));
 
 /* ================= MODELS ================= */
-const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema({
+const UserSchema = new mongoose.Schema({
   name: { type: String, required: true }, 
   email: { type: String, unique: true, required: true, lowercase: true }, 
   password: { type: String, required: true }, 
   role: { type: String, default: "user" }, 
   balance: { type: Number, default: 5000 },
-  profileImg: { type: String, default: "" }
-}, { timestamps: true }));
+  profilePic: { type: String, default: "" } // প্রোফাইল পিকচার ফিল্ড
+}, { timestamps: true });
+
+const User = mongoose.models.User || mongoose.model("User", UserSchema);
 
 const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
@@ -68,7 +70,7 @@ const adminAuth = (req, res, next) => {
 
 /* ================= ROUTES ================= */
 
-app.get("/", (req, res) => res.send("🚀 Vinance API Active - Working Perfectly"));
+app.get("/", (req, res) => res.send("🚀 Vinance API Active"));
 
 // --- AUTH ---
 app.post("/api/register", async (req, res) => {
@@ -76,10 +78,9 @@ app.post("/api/register", async (req, res) => {
     const { name, email, password } = req.body;
     const exists = await User.findOne({ email: email.toLowerCase() });
     if (exists) return res.status(400).json({ success: false, message: "ইমেইলটি ব্যবহৃত হচ্ছে" });
-
     const hashedPassword = await bcrypt.hash(password, 10);
-    await User.create({ name, email: email.toLowerCase(), password: hashedPassword, balance: 5000 });
-    res.json({ success: true, message: "রেজিস্ট্রেশন সফল হয়েছে" });
+    await User.create({ name, email: email.toLowerCase(), password: hashedPassword });
+    res.json({ success: true, message: "রেজিস্ট্রেশন সফল" });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
@@ -90,38 +91,30 @@ app.post("/api/login", async (req, res) => {
       return res.status(400).json({ success: false, message: "ভুল তথ্য" });
     }
     const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
-    res.json({ success: true, token, user: { _id: user._id, name: user.name, email: user.email, role: user.role, balance: user.balance } });
+    res.json({ success: true, token, user });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
 // --- PROFILE UPDATE (FIXED) ---
 app.get("/api/profile", auth, async (req, res) => {
-  try {
-    const user = await User.findById(req.user.id).select("-password");
-    res.json(user);
-  } catch (err) { res.status(500).json({ success: false }); }
+  const user = await User.findById(req.user.id).select("-password");
+  res.json(user);
 });
 
 app.put("/api/profile/update", auth, async (req, res) => {
   try {
-    const { name, profileImg } = req.body;
-    const updatedUser = await User.findByIdAndUpdate(
-      req.user.id, 
-      { name, profileImg }, 
-      { new: true }
-    ).select("-password");
-    res.json({ success: true, message: "Profile Updated Successfully", user: updatedUser });
+    const updatedUser = await User.findByIdAndUpdate(req.user.id, req.body, { new: true }).select("-password");
+    res.json({ success: true, message: "Profile Updated Successfully!", user: updatedUser });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- TRADING (FUTURES & SPOT FIXED) ---
+// --- SPOT & FUTURES TRADE (FIXED) ---
 const handleTrade = async (req, res) => {
   try {
-    const { amount, symbol, leverage, side, type } = req.body; 
+    const { amount, symbol, leverage, side } = req.body; 
     const user = await User.findById(req.user.id);
     const numAmt = Number(amount);
 
-    if (isNaN(numAmt) || numAmt <= 0) return res.status(400).json({ success: false, message: "সঠিক অ্যামাউন্ট দিন" });
     if (user.balance < numAmt) return res.status(400).json({ success: false, message: "ব্যালেন্স নেই" });
 
     user.balance -= numAmt;
@@ -133,65 +126,76 @@ const handleTrade = async (req, res) => {
       amount: numAmt,
       symbol: symbol || "BTC",
       status: "approved",
-      details: `${side || 'Buy'} ${type || 'Market'} Trade ${leverage ? leverage+'x' : ''}`
+      details: `${side || 'Order'} Trade Successful`
     });
 
-    res.json({ success: true, message: "ট্রেড সফল হয়েছে", newBalance: user.balance });
+    res.json({ success: true, message: "Trade Successful!", newBalance: user.balance });
   } catch (err) { res.status(500).json({ success: false, message: "ট্রেড সফল হয়নি" }); }
 };
 
-app.post("/api/futures/trade", auth, handleTrade);
 app.post("/api/spot/trade", auth, handleTrade);
-app.post("/api/trade", auth, handleTrade);
+app.post("/api/futures/trade", auth, handleTrade);
 
-// --- BECOME A TRADER (FIXED) ---
+// --- BECOME A LEAD / TRADER APPLY ---
 app.post("/api/traders/apply", auth, async (req, res) => {
   try {
-    const { experience, capital } = req.body;
+    const { experience, capital, img } = req.body;
     const user = await User.findById(req.user.id);
-    const trader = await Trader.create({
+    await Trader.create({
       userId: user._id,
       name: user.name,
-      experience: experience,
-      aum: capital,
-      status: "pending"
+      experience, aum: capital, img,
+      status: "approved"
     });
-    res.json({ success: true, message: "আবেদন জমা হয়েছে", trader });
-  } catch (err) { res.status(500).json({ success: false, message: "আবেদন ব্যর্থ হয়েছে" }); }
+    res.json({ success: true, message: "Trader Profile Created!" });
+  } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- ADMIN CONTROL (TRADERS EDIT/DELETE ADDED) ---
+// --- ADMIN CONTROL (FIXED & ADDED DELETE/EDIT) ---
+
+// 1. Get All Admin Data
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
-    const users = await User.find().sort({ createdAt: -1 });
+    const users = await User.find().select("-password");
     const requests = await Transaction.find().populate("userId", "name email").sort({ createdAt: -1 });
-    const traders = await Trader.find().sort({ createdAt: -1 });
+    const traders = await Trader.find();
     const plans = await Plan.find();
     res.json({ success: true, users, requests, traders, plans });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-app.put("/api/admin/traders/:id", auth, adminAuth, async (req, res) => {
-  try {
-    const updatedTrader = await Trader.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    res.json({ success: true, message: "Trader updated", updatedTrader });
-  } catch (err) { res.status(500).json({ success: false }); }
-});
-
-app.delete("/api/admin/traders/:id", auth, adminAuth, async (req, res) => {
-  try {
-    await Trader.findByIdAndDelete(req.params.id);
-    res.json({ success: true, message: "Trader deleted" });
-  } catch (err) { res.status(500).json({ success: false }); }
-});
-
+// 2. Update Balance
 app.put("/api/admin/update-balance/:id", auth, adminAuth, async (req, res) => {
   try {
     await User.findByIdAndUpdate(req.params.id, { balance: req.body.balance });
-    res.json({ success: true, message: "ব্যালেন্স আপডেট হয়েছে" });
+    res.json({ success: true, message: "Balance Updated!" });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
+// 3. Trader Edit & Delete (FIXED)
+app.put("/api/admin/trader/:id", auth, adminAuth, async (req, res) => {
+  try {
+    await Trader.findByIdAndUpdate(req.params.id, req.body);
+    res.json({ success: true, message: "Trader Updated!" });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
+app.delete("/api/admin/trader/:id", auth, adminAuth, async (req, res) => {
+  try {
+    await Trader.findByIdAndDelete(req.params.id);
+    res.json({ success: true, message: "Trader Deleted!" });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
+// 4. User Delete
+app.delete("/api/admin/user/:id", auth, adminAuth, async (req, res) => {
+  try {
+    await User.findByIdAndDelete(req.params.id);
+    res.json({ success: true, message: "User Deleted!" });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
+// 5. Transaction Approve/Reject
 app.put("/api/admin/transaction/:id", auth, adminAuth, async (req, res) => {
   try {
     const { status } = req.body;
@@ -205,16 +209,13 @@ app.put("/api/admin/transaction/:id", auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-app.post("/api/admin/create-plan", auth, adminAuth, async (req, res) => {
-  try {
-    const plan = await Plan.create(req.body);
-    res.json({ success: true, plan });
-  } catch (err) { res.status(500).json({ success: false }); }
-});
-
 // --- PUBLIC ---
 app.get("/api/traders/all", async (req, res) => {
-  try { res.json(await Trader.find({ status: "approved" }).sort({ createdAt: -1 })); } catch (err) { res.status(500).json([]); }
+  res.json(await Trader.find().sort({ createdAt: -1 }));
+});
+
+app.get("/api/plans", async (req, res) => {
+  res.json(await Plan.find({ status: true }));
 });
 
 const PORT = process.env.PORT || 5000;
