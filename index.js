@@ -24,7 +24,7 @@ const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema(
   email: { type: String, unique: true, required: true, lowercase: true }, 
   password: { type: String, required: true }, 
   role: { type: String, default: "user" }, 
-  balance: { type: Number, default: 5000 }
+  balance: { type: Number, default: 5000 } 
 }, { timestamps: true }));
 
 const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
@@ -99,18 +99,18 @@ app.get("/api/profile", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// প্রোফাইল আপডেট সমাধান (Fix Profile Update Failed)
+// প্রোফাইল আপডেট (Fix Profile Update Failed)
 app.put("/api/profile/update", auth, async (req, res) => {
   try {
     const { name, password } = req.body;
     const updateData = { name };
     if (password) { updateData.password = await bcrypt.hash(password, 10); }
     const user = await User.findByIdAndUpdate(req.user.id, updateData, { new: true }).select("-password");
-    res.json({ success: true, user });
+    res.json({ success: true, message: "Update Success", user });
   } catch (err) { res.status(500).json({ success: false, message: "Update failed!" }); }
 });
 
-// --- TRADING (Fix Spot/Futures Trade & Success Message)
+// --- TRADING (Fix Spot/Futures & Success Message) ---
 const handleTrade = async (req, res) => {
   try {
     const { amount, symbol, leverage, side, type } = req.body; 
@@ -131,7 +131,7 @@ const handleTrade = async (req, res) => {
 app.post("/api/futures/trade", auth, handleTrade);
 app.post("/api/spot/trade", auth, handleTrade);
 
-// --- BECOME A LEAD (Submit Form to Admin)
+// --- BECOME A LEAD (Submit Form to Admin) ---
 app.post("/api/traders/apply", auth, async (req, res) => {
   try {
     const { experience, capital } = req.body;
@@ -152,7 +152,7 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// অ্যাডমিন প্যানেলে ট্রাডার এডিট ও ডিলিট (Trader Edit/Delete)
+// অ্যাডমিন প্যানেলে ট্রাডার এডিট ও ডিলিট
 app.put("/api/admin/traders/:id", auth, adminAuth, async (req, res) => {
   try {
     await Trader.findByIdAndUpdate(req.params.id, req.body);
@@ -187,14 +187,7 @@ app.put("/api/admin/transaction/:id", auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-app.post("/api/admin/create-plan", auth, adminAuth, async (req, res) => {
-  try {
-    const plan = await Plan.create(req.body);
-    res.json({ success: true, plan });
-  } catch (err) { res.status(500).json({ success: false }); }
-});
-
-// PUBLIC
+// পাবলিক ট্রাডার লিস্ট
 app.get("/api/traders/all", async (req, res) => {
   try { res.json(await Trader.find({ status: "approved" }).sort({ createdAt: -1 })); } catch (err) { res.status(500).json([]); }
 });
