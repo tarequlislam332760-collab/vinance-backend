@@ -24,19 +24,17 @@ mongoose.connect(dbURI)
   .catch(err => console.error("❌ Database Connection Error:", err));
 
 /* ================= MODELS ================= */
-const UserSchema = new mongoose.Schema({
+const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema({
   name: { type: String, required: true }, 
-  email: { type: String, unique: true, required: true, lowercase: true, trim: true }, 
+  email: { type: String, unique: true, required: true, lowercase: true }, 
   password: { type: String, required: true }, 
   role: { type: String, default: "user" }, 
   balance: { type: Number, default: 0 }
-}, { timestamps: true });
-
-const User = mongoose.models.User || mongoose.model("User", UserSchema);
+}, { timestamps: true }));
 
 const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  type: String, 
+  type: String, // 'deposit', 'withdraw', 'spot', 'futures', 'investment'
   amount: Number, 
   symbol: String, 
   method: String, 
@@ -64,9 +62,8 @@ const Investment = mongoose.models.Investment || mongoose.model("Investment", ne
 const auth = (req, res, next) => {
   try {
     const token = req.headers.authorization?.split(" ")[1];
-    if (!token) return res.status(401).json({ success: false, message: "No Token Provided" });
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
+    if (!token) return res.status(401).json({ success: false, message: "No Token" });
+    req.user = jwt.verify(token, process.env.JWT_SECRET);
     next();
   } catch (err) { res.status(401).json({ success: false, message: "Session Expired" }); }
 };
@@ -78,55 +75,30 @@ const adminAuth = (req, res, next) => {
 
 /* ================= ROUTES ================= */
 
-app.get("/", (req, res) => res.send("🚀 Vinance API is Live"));
-
-// --- ✅ FIXED AUTH (Registration & Login) ---
+// --- AUTH ---
 app.post("/api/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
-    if (!name || !email || !password) return res.status(400).json({ success: false, message: "সবগুলো ঘর পূরণ করুন" });
-
-    const cleanEmail = email.toLowerCase().trim();
-    const exists = await User.findOne({ email: cleanEmail });
-    if (exists) return res.status(400).json({ success: false, message: "এই ইমেইল দিয়ে আগেই অ্যাকাউন্ট খোলা হয়েছে" });
-
+    const exists = await User.findOne({ email: email.toLowerCase() });
+    if (exists) return res.status(400).json({ success: false, message: "Email already exists" });
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = await User.create({ name, email: cleanEmail, password: hashedPassword });
-
-    res.status(201).json({ success: true, message: "Registration successful" });
-  } catch (err) { 
-    console.error(err);
-    res.status(500).json({ success: false, message: "সার্ভার এরর" }); 
-  }
+    await User.create({ name, email: email.toLowerCase(), password: hashedPassword });
+    res.json({ success: true, message: "Registration successful" });
+  } catch (err) { res.status(500).json({ success: false }); }
 });
 
 app.post("/api/login", async (req, res) => {
   try {
-    const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ success: false, message: "ইমেইল এবং পাসওয়ার্ড দিন" });
-
-    const cleanEmail = email.toLowerCase().trim();
-    const user = await User.findOne({ email: cleanEmail });
-    
-    if (!user) return res.status(400).json({ success: false, message: "অ্যাকাউন্ট পাওয়া যায়নি" });
-
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ success: false, message: "পাসওয়ার্ড ভুল" });
-
+    const user = await User.findOne({ email: req.body.email.toLowerCase().trim() });
+    if (!user || !(await bcrypt.compare(req.body.password, user.password))) {
+      return res.status(400).json({ success: false, message: "Wrong details" });
+    }
     const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "7d" });
-    
-    res.json({ 
-      success: true, 
-      token, 
-      user: { _id: user._id, name: user.name, email: user.email, role: user.role, balance: user.balance } 
-    });
-  } catch (err) { 
-    console.error(err);
-    res.status(500).json({ success: false, message: "লগইন ব্যর্থ হয়েছে" }); 
-  }
+    res.json({ success: true, token, user: { _id: user._id, name: user.name, email: user.email, role: user.role, balance: user.balance } });
+  } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- USER PROFILE ---
+// --- PROFILE ---
 app.get("/api/profile", auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select("-password");
@@ -134,39 +106,71 @@ app.get("/api/profile", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-app.put("/api/profile/update", auth, async (req, res) => {
+// --- DEPOSIT & WITHDRAW (Fixes "Failed to submit") ---
+app.post("/api/deposit", auth, async (req, res) => {
   try {
-    const updatedUser = await User.findByIdAndUpdate(req.user.id, req.body, { new: true }).select("-password");
-    res.json({ success: true, user: updatedUser });
-  } catch (err) { res.status(500).json({ success: false }); }
+    const { amount, method, transactionId } = req.body;
+    await Transaction.create({ userId: req.user.id, type: "deposit", amount, method, transactionId, status: "pending" });
+    res.json({ success: true, message: "Deposit request submitted" });
+  } catch (err) { res.status(500).json({ success: false, message: "Deposit failed" }); }
 });
 
-// --- PLANS & TRADING (Fixed) ---
-app.get("/api/plans", async (req, res) => {
+app.post("/api/withdraw", auth, async (req, res) => {
   try {
-    const plans = await Plan.find({ status: true });
-    res.json(plans);
-  } catch (err) { res.status(500).json([]); }
+    const { amount, method, details } = req.body;
+    const user = await User.findById(req.user.id);
+    if (user.balance < Number(amount)) return res.status(400).json({ success: false, message: "Insufficient balance" });
+
+    user.balance -= Number(amount);
+    await user.save();
+    await Transaction.create({ userId: req.user.id, type: "withdraw", amount, method, details, status: "pending" });
+    res.json({ success: true, message: "Withdrawal submitted" });
+  } catch (err) { res.status(500).json({ success: false, message: "Withdrawal failed" }); }
 });
 
-const handleTrade = async (req, res) => {
+// --- TRADING (Fixes "Buy Long" not working) ---
+app.post("/api/futures/trade", auth, async (req, res) => {
   try {
     const { amount, symbol, leverage, side } = req.body; 
     const user = await User.findById(req.user.id);
     const numAmt = Number(amount);
-    if (user.balance < numAmt) return res.status(400).json({ success: false, message: "ব্যালেন্স পর্যাপ্ত নয়" });
+
+    if (!numAmt || numAmt <= 0) return res.status(400).json({ message: "Invalid amount" });
+    if (user.balance < numAmt) return res.status(400).json({ message: "Check balance or network." });
 
     user.balance -= numAmt;
     await user.save();
-    await Transaction.create({
-      userId: user._id, type: leverage ? "futures" : "spot", amount: numAmt, symbol, status: "approved", details: `${side} trade`
-    });
-    res.json({ success: true, newBalance: user.balance });
-  } catch (err) { res.status(500).json({ success: false }); }
-};
 
-app.post("/api/trade", auth, handleTrade);
-app.post("/api/futures/trade", auth, handleTrade);
+    await Transaction.create({
+      userId: user._id, type: "futures", amount: numAmt, symbol, status: "approved",
+      details: `${side || 'Long'} trade with ${leverage || '1'}x leverage`
+    });
+
+    res.json({ success: true, message: "Trade Successful", newBalance: user.balance });
+  } catch (err) { res.status(500).json({ success: false, message: "Trade failed" }); }
+});
+
+// --- TRADER APPLY (Fixes "Become a Lead" Error) ---
+app.post("/api/traders/apply", auth, async (req, res) => {
+  try {
+    const { experience, capital } = req.body;
+    await Trader.create({ 
+      userId: req.user.id, 
+      name: (await User.findById(req.user.id)).name,
+      experience, aum: capital, status: "approved",
+      profit: "0%", winRate: "0%"
+    });
+    res.json({ success: true, message: "Application successful" });
+  } catch (err) { res.status(500).json({ success: false, message: "Failed to apply" }); }
+});
+
+// --- LOGS & INVESTMENTS (Fixes "No investments found") ---
+app.get("/api/my-investments", auth, async (req, res) => {
+  try {
+    const data = await Investment.find({ userId: req.user.id }).populate("planId");
+    res.json(data);
+  } catch (err) { res.status(500).json([]); }
+});
 
 app.get("/api/transactions", auth, async (req, res) => {
   try {
@@ -175,11 +179,15 @@ app.get("/api/transactions", auth, async (req, res) => {
   } catch (err) { res.status(500).json([]); }
 });
 
-// --- ADMIN ---
+app.get("/api/plans", async (req, res) => {
+  try { res.json(await Plan.find({ status: true })); } catch (err) { res.status(500).json([]); }
+});
+
+// --- ADMIN API ---
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
     const users = await User.find().select("-password");
-    const requests = await Transaction.find().populate("userId", "name email");
+    const requests = await Transaction.find().populate("userId", "name email").sort({ createdAt: -1 });
     const traders = await Trader.find();
     const plans = await Plan.find();
     res.json({ success: true, users, requests, traders, plans });
@@ -201,6 +209,6 @@ app.post("/api/admin/create-plan", auth, adminAuth, async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 API Active on Port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 
 export default app;
