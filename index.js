@@ -168,6 +168,13 @@ app.get("/api/plans", async (req, res) => {
   try { res.json(await Plan.find({ status: true })); } catch (err) { res.status(500).json([]); }
 });
 
+app.get("/api/my-investments", auth, async (req, res) => {
+  try { 
+    const data = await Investment.find({ userId: req.user.id }).populate("planId").sort({ createdAt: -1 });
+    res.json(data); 
+  } catch (err) { res.status(500).json([]); }
+});
+
 // --- TRANSACTIONS ---
 app.post("/api/deposit", auth, async (req, res) => {
   try {
@@ -208,7 +215,6 @@ app.post("/api/traders/apply", auth, async (req, res) => {
 
 /* ================= ADMIN ACTIONS ================= */
 
-// Trader Create, Edit, Delete
 app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
   try {
     await Trader.create({ ...req.body, status: "approved" });
@@ -231,7 +237,6 @@ app.delete("/api/admin/delete-trader/:id", auth, adminAuth, async (req, res) => 
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// Plan Create & Delete
 app.post("/api/admin/create-plan", auth, adminAuth, async (req, res) => {
   try {
     await Plan.create(req.body);
@@ -246,7 +251,6 @@ app.delete("/api/admin/delete-plan/:id", auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// User & Balance Management
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
     const [users, requests, traders, plans] = await Promise.all([
@@ -281,4 +285,4 @@ app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on Port ${PORT}`));
-export default app;
+export default app; 
