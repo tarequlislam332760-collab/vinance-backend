@@ -72,7 +72,7 @@ const adminAuth = (req, res, next) => {
 
 /* ================= ROUTES ================= */
 
-app.get("/", (req, res) => res.send("🚀 Vinance System Online - Stable Build V19"));
+app.get("/", (req, res) => res.send("🚀 Vinance System Online - Stable Build V20"));
 
 // --- AUTH & PROFILE ---
 app.post("/api/register", async (req, res) => {
@@ -104,14 +104,27 @@ app.get("/api/profile", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Server Error" }); }
 });
 
+// প্রোফাইল আপডেট ফিক্স (Update Failed সমস্যা সমাধান)
 app.post("/api/profile/update", auth, async (req, res) => {
   try {
     const { name, email, password } = req.body;
-    let updateData = { name, email: email?.toLowerCase() };
-    if (password) updateData.password = await bcrypt.hash(password, 10);
-    const updatedUser = await User.findByIdAndUpdate(req.user.id, updateData, { new: true }).select("-password");
-    res.json({ success: true, user: updatedUser });
-  } catch (err) { res.status(500).json({ success: false, message: "Update failed" }); }
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ success: false, message: "User not found" });
+
+    if (name) user.name = name;
+    if (email) user.email = email.toLowerCase();
+    if (password && password.trim() !== "") {
+      user.password = await bcrypt.hash(password, 10);
+    }
+
+    await user.save();
+    const updatedUser = user.toObject();
+    delete updatedUser.password;
+
+    res.json({ success: true, message: "Profile Updated!", user: updatedUser });
+  } catch (err) { 
+    res.status(500).json({ success: false, message: "Update failed" }); 
+  }
 });
 
 // --- TRADING & INVEST ---
@@ -188,23 +201,23 @@ app.post("/api/traders/apply", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-/* ================= ADMIN ACTIONS (Edited & New Routes) ================= */
+/* ================= ADMIN ACTIONS ================= */
 
-// ডিলিট ট্রেডার (New)
+// ডিলিট ট্রেডার (Admin)
 app.delete("/api/admin/delete-trader/:id", auth, adminAuth, async (req, res) => {
   try {
     await Trader.findByIdAndDelete(req.params.id);
     res.json({ success: true, message: "Trader Deleted Successfully" });
-  } catch (err) { res.status(500).json({ success: false }); }
+  } catch (err) { res.status(500).json({ success: false, message: "Delete failed" }); }
 });
 
-// এডিট ট্রেডার (New)
+// এডিট ট্রেডার (Admin)
 app.post("/api/admin/update-trader", auth, adminAuth, async (req, res) => {
   try {
     const { id, name, img, profit, winRate, aum, mdd, status } = req.body;
     await Trader.findByIdAndUpdate(id, { name, img, profit, winRate, aum, mdd, status });
     res.json({ success: true, message: "Trader Updated Successfully" });
-  } catch (err) { res.status(500).json({ success: false }); }
+  } catch (err) { res.status(500).json({ success: false, message: "Update failed" }); }
 });
 
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
@@ -242,4 +255,4 @@ app.post("/api/admin/update-balance", auth, adminAuth, async (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on Port ${PORT}`));
-export default app; 
+export default app;
