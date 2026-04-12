@@ -102,11 +102,70 @@ app.get("/api/profile", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Server Error" }); }
 });
 
-// --- ✅ TRADER APPLY FIX (400 Error Fix) ---
+// ✅ FIX 404: Profile Update Route
+app.post("/api/profile/update", auth, async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+    let updateObj = { name, email: email?.toLowerCase() };
+    if (password) updateObj.password = await bcrypt.hash(password, 10);
+    const updated = await User.findByIdAndUpdate(req.user.id, updateObj, { new: true }).select("-password");
+    res.json({ success: true, user: updated });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
+// ✅ FIX 404: Investment & Plans
+app.get("/api/plans", async (req, res) => {
+  try {
+    const plans = await Plan.find({ status: true });
+    res.json(plans);
+  } catch (err) { res.status(500).json([]); }
+});
+
+app.get("/api/my-investments", auth, async (req, res) => {
+  try {
+    const data = await Investment.find({ userId: req.user.id }).populate("planId").sort({ createdAt: -1 });
+    res.json(data);
+  } catch (err) { res.status(500).json([]); }
+});
+
+// ✅ FIX 404: Trade Routes
+app.post("/api/trade", auth, async (req, res) => {
+  try {
+    const { amount } = req.body;
+    const user = await User.findById(req.user.id);
+    if (user.balance < amount) return res.status(400).json({ success: false, message: "Insufficient Balance" });
+    user.balance -= amount;
+    await user.save();
+    await Transaction.create({ userId: req.user.id, amount, type: "trade", status: "approved", ...req.body });
+    res.json({ success: true, newBalance: user.balance });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
+app.post("/api/futures/trade", auth, async (req, res) => {
+  try {
+    const { amount } = req.body;
+    const user = await User.findById(req.user.id);
+    if (user.balance < amount) return res.status(400).json({ success: false });
+    user.balance -= amount;
+    await user.save();
+    await Transaction.create({ userId: req.user.id, amount, type: "futures", status: "approved", ...req.body });
+    res.json({ success: true, newBalance: user.balance });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
+// ✅ FIX 404: Transactions List
+app.get("/api/transactions", auth, async (req, res) => {
+  try {
+    const data = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
+    res.json(data);
+  } catch (err) { res.status(500).json([]); }
+});
+
+// --- TRADERS ---
 app.post("/api/traders/apply", auth, async (req, res) => {
   try {
     const existing = await Trader.findOne({ userId: req.user.id });
-    if(existing) return res.status(200).json({ success: true, message: "Already a trader" }); // Changed 400 to 200 to avoid Axios error
+    if(existing) return res.json({ success: true, message: "Already a trader" });
     const user = await User.findById(req.user.id);
     await Trader.create({ userId: user._id, name: user.name, status: "approved" });
     res.json({ success: true });
@@ -139,7 +198,7 @@ app.post("/api/withdraw", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-/* ================= ADMIN ACTIONS (FIXING 404 & 500) ================= */
+/* ================= ADMIN ACTIONS ================= */
 
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
@@ -153,14 +212,12 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// ✅ Admin Request Handle (Fixed 404)
 app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
   try {
     const { requestId, status } = req.body;
     if(!requestId) return res.status(400).json({ success: false, message: "Missing Request ID" });
-
     const trx = await Transaction.findById(requestId);
-    if (!trx) return res.status(404).json({ success: false, message: "Transaction not found" });
+    if (!trx) return res.status(404).json({ success: false });
     
     if (status === "approved" && trx.status !== "approved") {
       if (trx.type === "deposit") {
@@ -170,7 +227,7 @@ app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
     trx.status = status;
     await trx.save();
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+  } catch (err) { res.status(500).json({ success: false }); }
 });
 
 app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
@@ -190,4 +247,4 @@ app.post("/api/admin/update-balance", auth, adminAuth, async (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on Port ${PORT}`));
-export default app;
+export default app; 
