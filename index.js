@@ -29,7 +29,7 @@ const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema(
 
 const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-  type: String, 
+  type: String, // deposit, withdraw, trade, investment
   amount: Number, symbol: String, method: String, transactionId: String, 
   status: { type: String, default: "pending" }, details: String 
 }, { timestamps: true }));
@@ -40,11 +40,10 @@ const Plan = mongoose.models.Plan || mongoose.model("Plan", new mongoose.Schema(
 }));
 
 const Trader = mongoose.models.Trader || mongoose.model("Trader", new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: false }, // Optional for Admin creation
   name: String, img: { type: String, default: "" }, 
   profit: { type: String, default: "0%" }, winRate: { type: String, default: "0%" }, 
   aum: { type: String, default: "0" }, mdd: { type: String, default: "0%" },
-  chartData: { type: String, default: "" }, experience: String, status: { type: String, default: "approved" } 
+  status: { type: String, default: "approved" } 
 }, { timestamps: true }));
 
 const Investment = mongoose.models.Investment || mongoose.model("Investment", new mongoose.Schema({
@@ -70,7 +69,7 @@ const adminAuth = (req, res, next) => {
 
 /* ================= ROUTES ================= */
 
-app.get("/", (req, res) => res.send("🚀 Vinance System Online - Stable Build V14"));
+app.get("/", (req, res) => res.send("🚀 Vinance System Online - Stable Build V15"));
 
 // --- AUTH & PROFILE ---
 app.post("/api/register", async (req, res) => {
@@ -102,27 +101,33 @@ app.get("/api/profile", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Server Error" }); }
 });
 
-app.post("/api/profile/update", auth, async (req, res) => {
+// --- TRADING & INVESTMENTS (FIXED 404s) ---
+app.post("/api/trade", auth, async (req, res) => {
   try {
-    const { name, email, password } = req.body;
-    let updateObj = { name, email: email?.toLowerCase() };
-    if (password) updateObj.password = await bcrypt.hash(password, 10);
-    const updated = await User.findByIdAndUpdate(req.user.id, updateObj, { new: true }).select("-password");
-    if (!updated) return res.status(404).json({ success: false, message: "User not found" });
-    res.json({ success: true, user: updated });
-  } catch (err) { res.status(500).json({ success: false }); }
+    const { type, amount, symbol } = req.body;
+    const user = await User.findById(req.user.id);
+    if (user.balance < amount) return res.status(400).json({ message: "Insufficient balance" });
+    user.balance -= amount;
+    await user.save();
+    await Transaction.create({ userId: req.user.id, type: `trade-${type}`, amount, symbol, status: "approved" });
+    res.json({ success: true, message: "Trade successful" });
+  } catch (err) { res.status(500).json({ message: "Trade failed" }); }
 });
 
-// --- TRADERS & DATA ---
-app.get("/api/traders/all", async (req, res) => {
-  try { res.json(await Trader.find({ status: "approved" }).sort({ createdAt: -1 })); } catch (err) { res.status(500).json([]); }
+app.get("/api/plans", async (req, res) => {
+  try { res.json(await Plan.find({ status: true })); } catch (err) { res.status(500).json([]); }
+});
+
+app.get("/api/my-investments", auth, async (req, res) => {
+  try { res.json(await Investment.find({ userId: req.user.id }).populate("planId").sort({ createdAt: -1 })); } catch (err) { res.status(500).json([]); }
 });
 
 app.get("/api/transactions", auth, async (req, res) => {
-  try {
-    const data = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
-    res.json(data);
-  } catch (err) { res.status(500).json([]); }
+  try { res.json(await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 })); } catch (err) { res.status(500).json([]); }
+});
+
+app.get("/api/traders/all", async (req, res) => {
+  try { res.json(await Trader.find({ status: "approved" }).sort({ createdAt: -1 })); } catch (err) { res.status(500).json([]); }
 });
 
 /* ================= ADMIN ACTIONS ================= */
@@ -139,57 +144,30 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// ✅ Admin Request Handle (Fixed 400 & Payload issues)
+app.post("/api/admin/create-plan", auth, adminAuth, async (req, res) => {
+  try {
+    await Plan.create(req.body);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
 app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
   try {
     const { requestId, status } = req.body;
-    const id = requestId || req.body.id; // Support both naming conventions
-    if (!id) return res.status(400).json({ success: false, message: "Missing Request ID" });
-    
-    const trx = await Transaction.findById(id);
-    if (!trx) return res.status(404).json({ success: false, message: "Trx not found" });
-
+    const trx = await Transaction.findById(requestId || req.body.id);
+    if (!trx) return res.status(404).json({ success: false, message: "Not found" });
     if (status === "approved" && trx.status !== "approved" && trx.type === "deposit") {
       await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
     }
     trx.status = status;
     await trx.save();
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
-});
-
-// ✅ Admin Create Trader (Fixed 500)
-app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
-  try {
-    const { name } = req.body;
-    if(!name) return res.status(400).json({ success: false, message: "Name is required" });
-    
-    await Trader.create({
-      ...req.body,
-      status: "approved",
-      profit: req.body.profit || "0%",
-      winRate: req.body.winRate || "0%",
-      aum: req.body.aum || "0",
-      mdd: req.body.mdd || "0%"
-    });
-    res.json({ success: true });
-  } catch (err) { 
-    res.status(500).json({ success: false, error: err.message }); 
-  }
-});
-
-app.post("/api/admin/update-trader", auth, adminAuth, async (req, res) => {
-  try {
-    const { id, ...updateData } = req.body;
-    await Trader.findByIdAndUpdate(id, updateData);
-    res.json({ success: true });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-app.post("/api/admin/delete-trader", auth, adminAuth, async (req, res) => {
+app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
   try {
-    const id = req.body.id || req.body.traderId;
-    await Trader.findByIdAndDelete(id);
+    await Trader.create({ ...req.body, status: "approved" });
     res.json({ success: true });
   } catch (err) { res.status(500).json({ success: false }); }
 });
@@ -203,4 +181,4 @@ app.post("/api/admin/update-balance", auth, adminAuth, async (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on Port ${PORT}`));
-export default app; 
+export default app;
