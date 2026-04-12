@@ -24,7 +24,8 @@ const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema(
   email: { type: String, unique: true, required: true, lowercase: true }, 
   password: { type: String, required: true }, 
   role: { type: String, default: "user" }, 
-  balance: { type: Number, default: 5000 } 
+  balance: { type: Number, default: 5000 },
+  img: { type: String, default: "https://i.ibb.co/L8N4T3p/avatar.png" } // ছবি দেখানোর জন্য নতুন ফিল্ড
 }, { timestamps: true }));
 
 const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
@@ -74,7 +75,6 @@ const adminAuth = (req, res, next) => {
 
 app.get("/", (req, res) => res.send("🚀 Vinance System Online - Stable Build V21"));
 
-// --- AUTH & PROFILE ---
 app.post("/api/register", async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -106,12 +106,13 @@ app.get("/api/profile", auth, async (req, res) => {
 
 app.post("/api/profile/update", auth, async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, img } = req.body;
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
     if (name) user.name = name;
     if (email) user.email = email.toLowerCase();
+    if (img) user.img = img; // ছবি আপডেট করার লজিক
     if (password && password.trim() !== "") {
       user.password = await bcrypt.hash(password, 10);
     }
@@ -119,14 +120,13 @@ app.post("/api/profile/update", auth, async (req, res) => {
     await user.save();
     const updatedUser = user.toObject();
     delete updatedUser.password;
-
     res.json({ success: true, message: "Profile Updated!", user: updatedUser });
   } catch (err) { 
     res.status(500).json({ success: false, message: "Update failed" }); 
   }
 });
 
-// --- TRADING & INVEST (SPOT & FUTURES) ---
+// --- TRADING & INVEST (আগের মতোই থাকবে) ---
 app.post("/api/trade", auth, async (req, res) => {
   try {
     const { type, amount, symbol } = req.body;
@@ -213,7 +213,24 @@ app.post("/api/traders/apply", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-/* ================= ADMIN ACTIONS ================= */
+/* ================= ADMIN ACTIONS (আপনার আবদার অনুযায়ী) ================= */
+
+// নতুন: ইউজার এডিট করা (অ্যাডমিন দ্বারা)
+app.post("/api/admin/update-user", auth, adminAuth, async (req, res) => {
+  try {
+    const { userId, name, email, role, balance, img } = req.body;
+    await User.findByIdAndUpdate(userId, { name, email, role, balance, img });
+    res.json({ success: true, message: "User Updated" });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
+// নতুন: ইউজার ডিলিট করা
+app.delete("/api/admin/delete-user/:id", auth, adminAuth, async (req, res) => {
+  try {
+    await User.findByIdAndDelete(req.params.id);
+    res.json({ success: true, message: "User Deleted" });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
 
 app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
   try {
@@ -236,6 +253,8 @@ app.delete("/api/admin/delete-trader/:id", auth, adminAuth, async (req, res) => 
     res.json({ success: true, message: "Trader Deleted" });
   } catch (err) { res.status(500).json({ success: false }); }
 });
+
+// ... বাকি সব অ্যাডমিন রুট (create-plan, all-data, update-balance, handle-request) আগের মতোই আছে ...
 
 app.post("/api/admin/create-plan", auth, adminAuth, async (req, res) => {
   try {
@@ -285,4 +304,4 @@ app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on Port ${PORT}`));
-export default app; 
+export default app;
