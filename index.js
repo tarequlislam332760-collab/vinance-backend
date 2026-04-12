@@ -101,7 +101,35 @@ app.get("/api/profile", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Server Error" }); }
 });
 
-// --- TRADING & INVESTMENTS (FIXED 404s) ---
+// --- DEPOSIT, WITHDRAW & TRANSACTIONS ---
+app.post("/api/deposit", auth, async (req, res) => {
+  try {
+    const { amount, method, transactionId } = req.body;
+    await Transaction.create({
+      userId: req.user.id, type: "deposit", amount, method, transactionId, status: "pending"
+    });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
+app.post("/api/withdraw", auth, async (req, res) => {
+  try {
+    const { amount, method, details } = req.body;
+    const user = await User.findById(req.user.id);
+    if (user.balance < amount) return res.status(400).json({ message: "Insufficient balance" });
+    await Transaction.create({
+      userId: req.user.id, type: "withdraw", amount, method, details, status: "pending"
+    });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
+app.get("/api/transactions", auth, async (req, res) => {
+  try { res.json(await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 })); } 
+  catch (err) { res.status(500).json([]); }
+});
+
+// --- TRADING & INVESTMENTS ---
 app.post("/api/trade", auth, async (req, res) => {
   try {
     const { type, amount, symbol } = req.body;
@@ -110,8 +138,21 @@ app.post("/api/trade", auth, async (req, res) => {
     user.balance -= amount;
     await user.save();
     await Transaction.create({ userId: req.user.id, type: `trade-${type}`, amount, symbol, status: "approved" });
-    res.json({ success: true, message: "Trade successful" });
+    res.json({ success: true });
   } catch (err) { res.status(500).json({ message: "Trade failed" }); }
+});
+
+app.post("/api/invest", auth, async (req, res) => {
+  try {
+    const { planId, amount } = req.body;
+    const user = await User.findById(req.user.id);
+    if (user.balance < amount) return res.status(400).json({ message: "Insufficient balance" });
+    user.balance -= amount;
+    await user.save();
+    await Investment.create({ userId: req.user.id, planId, amount, status: "active" });
+    await Transaction.create({ userId: req.user.id, type: "investment", amount, status: "approved" });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ success: false }); }
 });
 
 app.get("/api/plans", async (req, res) => {
@@ -119,15 +160,21 @@ app.get("/api/plans", async (req, res) => {
 });
 
 app.get("/api/my-investments", auth, async (req, res) => {
-  try { res.json(await Investment.find({ userId: req.user.id }).populate("planId").sort({ createdAt: -1 })); } catch (err) { res.status(500).json([]); }
+  try { res.json(await Investment.find({ userId: req.user.id }).populate("planId").sort({ createdAt: -1 })); } 
+  catch (err) { res.status(500).json([]); }
 });
 
-app.get("/api/transactions", auth, async (req, res) => {
-  try { res.json(await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 })); } catch (err) { res.status(500).json([]); }
-});
-
+// --- TRADERS ---
 app.get("/api/traders/all", async (req, res) => {
-  try { res.json(await Trader.find({ status: "approved" }).sort({ createdAt: -1 })); } catch (err) { res.status(500).json([]); }
+  try { res.json(await Trader.find({ status: "approved" }).sort({ createdAt: -1 })); } 
+  catch (err) { res.status(500).json([]); }
+});
+
+app.post("/api/traders/apply", auth, async (req, res) => {
+  try {
+    await Trader.create({ ...req.body, status: "pending" });
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ success: false }); }
 });
 
 /* ================= ADMIN ACTIONS ================= */
@@ -140,7 +187,7 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
       Trader.find().sort({ createdAt: -1 }),
       Plan.find()
     ]);
-    res.json({ success: true, users, requests, traders, plans });
+    res.json({ success: true, users, requests, traders, plans }); 
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
@@ -156,9 +203,14 @@ app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
     const { requestId, status } = req.body;
     const trx = await Transaction.findById(requestId || req.body.id);
     if (!trx) return res.status(404).json({ success: false, message: "Not found" });
-    if (status === "approved" && trx.status !== "approved" && trx.type === "deposit") {
-      await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
+    
+    if (status === "approved" && trx.status !== "approved") {
+      if (trx.type === "deposit") {
+        await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
+      }
+      // উইথড্র রিকোয়েস্ট রিজেক্ট করলে টাকা ব্যালেন্সে ফেরত দেওয়ার লজিক এখানে যোগ করতে পারেন।
     }
+    
     trx.status = status;
     await trx.save();
     res.json({ success: true });
