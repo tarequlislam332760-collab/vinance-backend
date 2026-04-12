@@ -103,7 +103,6 @@ app.get("/api/profile", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Server Error" }); }
 });
 
-// ✅ FIX 404: প্রোফাইল আপডেটের রুটটি ফ্রন্টএন্ড থেকে যেভাবে কল করা হচ্ছে তা নিশ্চিত করা হলো
 app.post("/api/profile/update", auth, async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -112,6 +111,46 @@ app.post("/api/profile/update", auth, async (req, res) => {
     const updated = await User.findByIdAndUpdate(req.user.id, updateObj, { new: true }).select("-password");
     res.json({ success: true, user: updated });
   } catch (err) { res.status(500).json({ success: false }); }
+});
+
+// ✅ FIX 404: Added missing Trade/Futures Routes
+app.post("/api/trade", auth, async (req, res) => {
+  try {
+    const { amount } = req.body;
+    const user = await User.findById(req.user.id);
+    if (user.balance < amount) return res.status(400).json({ success: false, message: "Low Balance" });
+    user.balance -= amount;
+    await user.save();
+    await Transaction.create({ ...req.body, userId: req.user.id, type: "trade", status: "approved" });
+    res.json({ success: true, newBalance: user.balance });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
+app.post("/api/futures/trade", auth, async (req, res) => {
+  try {
+    const { amount } = req.body;
+    const user = await User.findById(req.user.id);
+    if (user.balance < amount) return res.status(400).json({ success: false });
+    user.balance -= amount;
+    await user.save();
+    await Transaction.create({ ...req.body, userId: req.user.id, type: "futures", status: "approved" });
+    res.json({ success: true, newBalance: user.balance });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
+// ✅ FIX 404: Added missing Investments & Traders Fetching
+app.get("/api/my-investments", auth, async (req, res) => {
+  try {
+    const data = await Investment.find({ userId: req.user.id }).populate("planId").sort({ createdAt: -1 });
+    res.json(data);
+  } catch (err) { res.status(500).json([]); }
+});
+
+app.get("/api/traders/all", async (req, res) => {
+  try {
+    const data = await Trader.find({ status: "approved" }).sort({ createdAt: -1 });
+    res.json(data);
+  } catch (err) { res.status(500).json([]); }
 });
 
 app.get("/api/transactions", auth, async (req, res) => {
@@ -145,7 +184,6 @@ app.get("/api/plans", async (req, res) => {
 
 /* ================= ADMIN API (FIXED) ================= */
 
-// ✅ FIX 404: অ্যাডমিন অল-ডেটা রুট
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
     const [users, requests, traders, plans, investments] = await Promise.all([
@@ -159,7 +197,7 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// ✅ FIX 404: Balance Update (Handle both PUT and POST for safety)
+// ✅ FIX 404: Using app.all to handle both PUT/POST for Admin actions
 const updateBalance = async (req, res) => {
   try {
     const { userId, balance } = req.body;
@@ -167,15 +205,13 @@ const updateBalance = async (req, res) => {
     res.json({ success: true });
   } catch (err) { res.status(500).json({ success: false }); }
 };
-app.put("/api/admin/update-balance", auth, adminAuth, updateBalance);
-app.post("/api/admin/update-balance", auth, adminAuth, updateBalance);
+app.route("/api/admin/update-balance").put(auth, adminAuth, updateBalance).post(auth, adminAuth, updateBalance);
 
-// ✅ FIX 404/500: Request Handling (Handle both PUT and POST)
 const handleRequest = async (req, res) => {
   try {
     const { requestId, status } = req.body;
     const trx = await Transaction.findById(requestId);
-    if (!trx) return res.status(404).json({ success: false, message: "Request not found" });
+    if (!trx) return res.status(404).json({ success: false });
     
     if (status === "approved" && trx.status !== "approved") {
       if (trx.type === "deposit") {
@@ -187,22 +223,14 @@ const handleRequest = async (req, res) => {
     res.json({ success: true });
   } catch (err) { res.status(500).json({ success: false }); }
 };
-app.post("/api/admin/handle-request", auth, adminAuth, handleRequest);
-app.put("/api/admin/handle-request", auth, adminAuth, handleRequest);
+app.route("/api/admin/handle-request").post(auth, adminAuth, handleRequest).put(auth, adminAuth, handleRequest);
 
-// ✅ FIX 500: Trader Creation (Added safety check for missing body fields)
 app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
   try {
-    const newTrader = new Trader({
-      ...req.body,
-      status: "approved"
-    });
+    const newTrader = new Trader({ ...req.body, status: "approved" });
     await newTrader.save();
     res.json({ success: true });
-  } catch (err) { 
-    console.error(err);
-    res.status(500).json({ success: false, error: err.message }); 
-  }
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
 app.post("/api/admin/create-plan", auth, adminAuth, async (req, res) => {
