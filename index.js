@@ -113,7 +113,26 @@ app.post("/api/profile/update", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// ✅ FIX: Missing Deposit Route
+// ✅ FIX 404: Added Transactions Route
+app.get("/api/transactions", auth, async (req, res) => {
+  try {
+    const data = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
+    res.json(data);
+  } catch (err) { res.status(500).json([]); }
+});
+
+// ✅ FIX 404: Added Withdraw Route
+app.post("/api/withdraw", auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    if (user.balance < req.body.amount) return res.status(400).json({ success: false, message: "Low Balance" });
+    user.balance -= req.body.amount;
+    await user.save();
+    await Transaction.create({ ...req.body, userId: req.user.id, type: "withdraw", status: "pending" });
+    res.json({ success: true, newBalance: user.balance });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
 app.post("/api/deposit", auth, async (req, res) => {
   try {
     await Transaction.create({ ...req.body, userId: req.user.id, type: "deposit", status: "pending" });
@@ -121,12 +140,11 @@ app.post("/api/deposit", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// ✅ FIX: Missing Trade Route (Spot/Futures)
 app.post("/api/trade", auth, async (req, res) => {
   try {
     const { amount, type } = req.body;
     const user = await User.findById(req.user.id);
-    if(user.balance < amount) return res.status(400).json({ success: false, message: "Low Balance" });
+    if(user.balance < amount) return res.status(400).json({ success: false });
     user.balance -= amount;
     await user.save();
     await Transaction.create({ userId: user._id, amount, type: type || "trade", status: "approved" });
@@ -134,7 +152,6 @@ app.post("/api/trade", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// ✅ FIX: Multiple Trade Endpoints to prevent 404
 app.post("/api/futures/trade", auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.id);
@@ -146,7 +163,6 @@ app.post("/api/futures/trade", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// ✅ FIX: Missing Invest Route
 app.post("/api/invest", auth, async (req, res) => {
   try {
     const { planId, amount } = req.body;
@@ -182,7 +198,7 @@ app.post("/api/traders/apply", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// --- ADMIN API (FIXED ALL 404) ---
+// --- ADMIN API ---
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
     const [users, requests, traders, plans, investments] = await Promise.all([
@@ -196,6 +212,7 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
+// ✅ FIX 404: Using app.put as called by frontend
 app.put("/api/admin/update-balance", auth, adminAuth, async (req, res) => {
   try {
     await User.findByIdAndUpdate(req.body.userId, { balance: Number(req.body.balance) });
@@ -203,10 +220,12 @@ app.put("/api/admin/update-balance", auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
+// ✅ FIX 500: Logic for handling status update
 app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
   try {
     const { requestId, status } = req.body;
     const trx = await Transaction.findById(requestId);
+    if (!trx) return res.status(404).json({ success: false });
     if (status === "approved" && trx.type === "deposit") {
       await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
     }
@@ -223,7 +242,7 @@ app.post("/api/admin/create-plan", auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// ✅ FIX: Added missing Create Trader Route
+// ✅ FIX 500: Trader Creation
 app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
   try {
     await Trader.create({ ...req.body, status: "approved" });
@@ -233,4 +252,4 @@ app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on Port ${PORT}`));
-export default app;
+export default app; 
