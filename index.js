@@ -70,9 +70,9 @@ const adminAuth = (req, res, next) => {
 
 /* ================= ROUTES ================= */
 
-app.get("/", (req, res) => res.send("🚀 Vinance System Online - Stable Build V11"));
+app.get("/", (req, res) => res.send("🚀 Vinance System Online - Stable Build V12"));
 
-// ✅ FIX 404: some-route (Home Page Error)
+// ✅ FIX 404: some-route
 app.get("/api/some-route", (req, res) => res.json({ success: true, status: "System Operational" }));
 
 // --- AUTH ---
@@ -105,7 +105,6 @@ app.get("/api/profile", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Server Error" }); }
 });
 
-// ✅ FIX 404: Profile Update
 app.post("/api/profile/update", auth, async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -116,7 +115,7 @@ app.post("/api/profile/update", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// ✅ FIX 404: Invest Route
+// --- INVEST & PLANS ---
 app.post("/api/invest", auth, async (req, res) => {
   try {
     const { planId, amount } = req.body;
@@ -140,7 +139,7 @@ app.get("/api/my-investments", auth, async (req, res) => {
   } catch (err) { res.status(500).json([]); }
 });
 
-// ✅ FIX 404: Trade & Transactions
+// --- TRADE & TRANSACTIONS ---
 app.post("/api/trade", auth, async (req, res) => {
   try {
     const { amount } = req.body;
@@ -217,42 +216,49 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// ✅ FIX 400 & 404: Handle Request
+// ✅ Admin Request Handle (Enhanced Validation)
 app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
   try {
     const { requestId, status } = req.body;
+    if (!requestId) return res.status(400).json({ success: false, message: "Missing ID" });
+    
     const trx = await Transaction.findById(requestId);
     if (!trx) return res.status(404).json({ success: false, message: "Trx not found" });
+
     if (status === "approved" && trx.status !== "approved" && trx.type === "deposit") {
-        await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
+      await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
     }
     trx.status = status;
     await trx.save();
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ success: false }); }
+  } catch (err) { res.status(500).json({ success: false, error: err.message }); }
 });
 
-// ✅ FIX 404: Create Plan
+// ✅ Admin Create Trader (Fixed 500 & Added Validation)
+app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
+  try {
+    if(!req.body.name) return res.status(400).json({ success: false, message: "Name is required" });
+    
+    await Trader.create({
+      ...req.body,
+      status: "approved",
+      profit: req.body.profit || "0%",
+      winRate: req.body.winRate || "0%",
+      aum: req.body.aum || "0"
+    });
+    res.json({ success: true });
+  } catch (err) { 
+    console.error("Trader Error:", err);
+    res.status(500).json({ success: false, error: err.message }); 
+  }
+});
+
+// ✅ Admin Create Plan
 app.post("/api/admin/create-plan", auth, adminAuth, async (req, res) => {
     try {
       await Plan.create(req.body);
       res.json({ success: true });
     } catch (err) { res.status(500).json({ success: false }); }
-});
-
-// ✅ FIX 500: Create Trader (Added default values for safety)
-app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
-  try {
-    const traderData = {
-        ...req.body,
-        status: "approved",
-        profit: req.body.profit || "0%",
-        winRate: req.body.winRate || "0%",
-        aum: req.body.aum || "0"
-    };
-    await Trader.create(traderData);
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
 app.post("/api/admin/update-balance", auth, adminAuth, async (req, res) => {
