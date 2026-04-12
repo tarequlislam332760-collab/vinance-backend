@@ -70,7 +70,7 @@ const adminAuth = (req, res, next) => {
 
 /* ================= ROUTES ================= */
 
-app.get("/", (req, res) => res.send("🚀 Vinance System Online - Stable Build V10"));
+app.get("/", (req, res) => res.send("🚀 Vinance Final Build - Stable"));
 
 // --- AUTH ---
 app.post("/api/register", async (req, res) => {
@@ -102,23 +102,24 @@ app.get("/api/profile", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Server Error" }); }
 });
 
-// ✅ FIX 404: Profile Update Route
-app.post("/api/profile/update", auth, async (req, res) => {
+// --- ✅ TRADE & FUTURES (Fixing 404) ---
+const handleTrade = async (req, res) => {
   try {
-    const { name, email, password } = req.body;
-    let updateObj = { name, email: email?.toLowerCase() };
-    if (password) updateObj.password = await bcrypt.hash(password, 10);
-    const updated = await User.findByIdAndUpdate(req.user.id, updateObj, { new: true }).select("-password");
-    res.json({ success: true, user: updated });
+    const { amount } = req.body;
+    const user = await User.findById(req.user.id);
+    if (user.balance < amount) return res.status(400).json({ success: false, message: "Low Balance" });
+    user.balance -= amount;
+    await user.save();
+    await Transaction.create({ ...req.body, userId: req.user.id, status: "approved" });
+    res.json({ success: true, newBalance: user.balance });
   } catch (err) { res.status(500).json({ success: false }); }
-});
+};
+app.post("/api/trade", auth, handleTrade);
+app.post("/api/futures/trade", auth, handleTrade);
 
-// ✅ FIX 404: Investment & Plans
+// --- ✅ INVESTMENTS & PLANS (Fixing 404) ---
 app.get("/api/plans", async (req, res) => {
-  try {
-    const plans = await Plan.find({ status: true });
-    res.json(plans);
-  } catch (err) { res.status(500).json([]); }
+  try { res.json(await Plan.find()); } catch (err) { res.status(500).json([]); }
 });
 
 app.get("/api/my-investments", auth, async (req, res) => {
@@ -128,48 +129,24 @@ app.get("/api/my-investments", auth, async (req, res) => {
   } catch (err) { res.status(500).json([]); }
 });
 
-// ✅ FIX 404: Trade Routes
-app.post("/api/trade", auth, async (req, res) => {
+app.post("/api/invest", auth, async (req, res) => {
   try {
-    const { amount } = req.body;
-    const user = await User.findById(req.user.id);
-    if (user.balance < amount) return res.status(400).json({ success: false, message: "Insufficient Balance" });
-    user.balance -= amount;
-    await user.save();
-    await Transaction.create({ userId: req.user.id, amount, type: "trade", status: "approved", ...req.body });
-    res.json({ success: true, newBalance: user.balance });
-  } catch (err) { res.status(500).json({ success: false }); }
-});
-
-app.post("/api/futures/trade", auth, async (req, res) => {
-  try {
-    const { amount } = req.body;
+    const { planId, amount } = req.body;
     const user = await User.findById(req.user.id);
     if (user.balance < amount) return res.status(400).json({ success: false });
     user.balance -= amount;
     await user.save();
-    await Transaction.create({ userId: req.user.id, amount, type: "futures", status: "approved", ...req.body });
+    await Investment.create({ userId: user._id, planId, amount });
     res.json({ success: true, newBalance: user.balance });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// ✅ FIX 404: Transactions List
+// --- ✅ TRANSACTIONS & TRADERS ---
 app.get("/api/transactions", auth, async (req, res) => {
   try {
     const data = await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 });
     res.json(data);
   } catch (err) { res.status(500).json([]); }
-});
-
-// --- TRADERS ---
-app.post("/api/traders/apply", auth, async (req, res) => {
-  try {
-    const existing = await Trader.findOne({ userId: req.user.id });
-    if(existing) return res.json({ success: true, message: "Already a trader" });
-    const user = await User.findById(req.user.id);
-    await Trader.create({ userId: user._id, name: user.name, status: "approved" });
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ success: false }); }
 });
 
 app.get("/api/traders/all", async (req, res) => {
@@ -179,26 +156,16 @@ app.get("/api/traders/all", async (req, res) => {
   } catch (err) { res.status(500).json([]); }
 });
 
-// --- TRANSACTIONS ---
-app.post("/api/deposit", auth, async (req, res) => {
+app.post("/api/traders/apply", auth, async (req, res) => {
   try {
-    await Transaction.create({ ...req.body, userId: req.user.id, type: "deposit", status: "pending" });
+    const exists = await Trader.findOne({ userId: req.user.id });
+    if(exists) return res.json({ success: true, message: "Already applied" });
+    await Trader.create({ userId: req.user.id, name: req.user.name, status: "approved" });
     res.json({ success: true });
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-app.post("/api/withdraw", auth, async (req, res) => {
-  try {
-    const user = await User.findById(req.user.id);
-    if (user.balance < req.body.amount) return res.status(400).json({ success: false, message: "Low Balance" });
-    user.balance -= req.body.amount;
-    await user.save();
-    await Transaction.create({ ...req.body, userId: req.user.id, type: "withdraw", status: "pending" });
-    res.json({ success: true, newBalance: user.balance });
-  } catch (err) { res.status(500).json({ success: false }); }
-});
-
-/* ================= ADMIN ACTIONS ================= */
+/* ================= ADMIN ACTIONS (Fixing 404 & 400) ================= */
 
 app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   try {
@@ -215,7 +182,6 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
 app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
   try {
     const { requestId, status } = req.body;
-    if(!requestId) return res.status(400).json({ success: false, message: "Missing Request ID" });
     const trx = await Transaction.findById(requestId);
     if (!trx) return res.status(404).json({ success: false });
     
@@ -246,5 +212,5 @@ app.post("/api/admin/update-balance", auth, adminAuth, async (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server running on Port ${PORT}`));
-export default app; 
+app.listen(PORT, () => console.log(`🚀 Server on ${PORT}`));
+export default app;
