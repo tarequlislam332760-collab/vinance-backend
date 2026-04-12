@@ -70,9 +70,8 @@ const adminAuth = (req, res, next) => {
 
 /* ================= ROUTES ================= */
 
-app.get("/", (req, res) => res.send("🚀 Vinance System Online - Stable Build V12"));
+app.get("/", (req, res) => res.send("🚀 Vinance System Online - Stable Build V13"));
 
-// ✅ FIX 404: some-route
 app.get("/api/some-route", (req, res) => res.json({ success: true, status: "System Operational" }));
 
 // --- AUTH ---
@@ -216,7 +215,7 @@ app.get("/api/admin/all-data", auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// ✅ Admin Request Handle (Enhanced Validation)
+// ✅ Admin Request Handle (Fixed 400 Error)
 app.post("/api/admin/handle-request", auth, adminAuth, async (req, res) => {
   try {
     const { requestId, status } = req.body;
@@ -248,9 +247,25 @@ app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
     });
     res.json({ success: true });
   } catch (err) { 
-    console.error("Trader Error:", err);
     res.status(500).json({ success: false, error: err.message }); 
   }
+});
+
+// ✅ Admin Edit/Update Trader (NEW)
+app.post("/api/admin/update-trader", auth, adminAuth, async (req, res) => {
+  try {
+    const { id, ...updateData } = req.body;
+    await Trader.findByIdAndUpdate(id, updateData);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
+// ✅ Admin Delete Trader (NEW)
+app.post("/api/admin/delete-trader", auth, adminAuth, async (req, res) => {
+  try {
+    await Trader.findByIdAndDelete(req.body.id);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ success: false }); }
 });
 
 // ✅ Admin Create Plan
@@ -270,4 +285,4 @@ app.post("/api/admin/update-balance", auth, adminAuth, async (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`🚀 Server running on Port ${PORT}`));
-export default app;
+export default app; 
