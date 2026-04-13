@@ -25,7 +25,7 @@ const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema(
   password: { type: String, required: true }, 
   role: { type: String, default: "user" }, 
   balance: { type: Number, default: 5000 },
-  img: { type: String, default: "https://i.ibb.co/L8N4T3p/avatar.png" } // ছবি দেখানোর জন্য নতুন ফিল্ড
+  img: { type: String, default: "https://i.ibb.co/L8N4T3p/avatar.png" } 
 }, { timestamps: true }));
 
 const Transaction = mongoose.models.Transaction || mongoose.model("Transaction", new mongoose.Schema({
@@ -112,7 +112,7 @@ app.post("/api/profile/update", auth, async (req, res) => {
 
     if (name) user.name = name;
     if (email) user.email = email.toLowerCase();
-    if (img) user.img = img; // ছবি আপডেট করার লজিক
+    if (img) user.img = img; 
     if (password && password.trim() !== "") {
       user.password = await bcrypt.hash(password, 10);
     }
@@ -126,7 +126,6 @@ app.post("/api/profile/update", auth, async (req, res) => {
   }
 });
 
-// --- TRADING & INVEST (আগের মতোই থাকবে) ---
 app.post("/api/trade", auth, async (req, res) => {
   try {
     const { type, amount, symbol } = req.body;
@@ -175,7 +174,6 @@ app.get("/api/my-investments", auth, async (req, res) => {
   } catch (err) { res.status(500).json([]); }
 });
 
-// --- TRANSACTIONS ---
 app.post("/api/deposit", auth, async (req, res) => {
   try {
     const { amount, method, transactionId } = req.body;
@@ -199,7 +197,6 @@ app.get("/api/transactions", auth, async (req, res) => {
   catch (err) { res.status(500).json([]); }
 });
 
-// --- TRADERS LOGIC ---
 app.get("/api/traders/all", async (req, res) => {
   try { res.json(await Trader.find({ status: "approved" }).sort({ createdAt: -1 })); } 
   catch (err) { res.status(500).json([]); }
@@ -213,9 +210,8 @@ app.post("/api/traders/apply", auth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-/* ================= ADMIN ACTIONS (আপনার আবদার অনুযায়ী) ================= */
+/* ================= ADMIN ACTIONS ================= */
 
-// নতুন: ইউজার এডিট করা (অ্যাডমিন দ্বারা)
 app.post("/api/admin/update-user", auth, adminAuth, async (req, res) => {
   try {
     const { userId, name, email, role, balance, img } = req.body;
@@ -224,7 +220,6 @@ app.post("/api/admin/update-user", auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
-// নতুন: ইউজার ডিলিট করা
 app.delete("/api/admin/delete-user/:id", auth, adminAuth, async (req, res) => {
   try {
     await User.findByIdAndDelete(req.params.id);
@@ -253,8 +248,6 @@ app.delete("/api/admin/delete-trader/:id", auth, adminAuth, async (req, res) => 
     res.json({ success: true, message: "Trader Deleted" });
   } catch (err) { res.status(500).json({ success: false }); }
 });
-
-// ... বাকি সব অ্যাডমিন রুট (create-plan, all-data, update-balance, handle-request) আগের মতোই আছে ...
 
 app.post("/api/admin/create-plan", auth, adminAuth, async (req, res) => {
   try {
