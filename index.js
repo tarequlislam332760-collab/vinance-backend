@@ -12,21 +12,15 @@ const app = express();
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 
-/* ================= DB CONNECTION ================= */
+/* ================= DB CONNECTION (UPDATED) ================= */
 const dbURI = process.env.MONGO_URI || process.env.MONGODB_URI;
-mongoose.connect(dbURI)
-  .mongoose.connect(process.env.MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-  serverSelectionTimeoutMS: 30000, // ৩০ সেকেন্ড সময় দিন কানেক্ট হতে
+
+mongoose.connect(dbURI, {
+  serverSelectionTimeoutMS: 30000, // ৩০ সেকেন্ড সময় নিবে কানেক্ট হতে
+  socketTimeoutMS: 45000,
 })
-mongoose.connect(process.env.MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-  serverSelectionTimeoutMS: 30000, // ৩০ সেকেন্ড সময় দিন কানেক্ট হতে
-})
-.then(() => console.log('✅ Database Connected Successfully'))
-.catch((err) => console.error('❌ Database Connection Error:', err));
+  .then(() => console.log("✅ Database Connected Successfully to BinanceDB"))
+  .catch(err => console.error("❌ Database Connection Error:", err));
 
 /* ================= MODELS ================= */
 const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema({
