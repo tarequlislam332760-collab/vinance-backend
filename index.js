@@ -15,8 +15,18 @@ app.use(express.json());
 /* ================= DB CONNECTION ================= */
 const dbURI = process.env.MONGO_URI || process.env.MONGODB_URI;
 mongoose.connect(dbURI)
-  .then(() => console.log("✅ Database Connected Successfully"))
-  .catch(err => console.error("❌ Database Connection Error:", err));
+  .mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  serverSelectionTimeoutMS: 30000, // ৩০ সেকেন্ড সময় দিন কানেক্ট হতে
+})
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+  serverSelectionTimeoutMS: 30000, // ৩০ সেকেন্ড সময় দিন কানেক্ট হতে
+})
+.then(() => console.log('✅ Database Connected Successfully'))
+.catch((err) => console.error('❌ Database Connection Error:', err));
 
 /* ================= MODELS ================= */
 const User = mongoose.models.User || mongoose.model("User", new mongoose.Schema({
