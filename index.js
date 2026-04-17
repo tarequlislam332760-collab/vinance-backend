@@ -240,6 +240,14 @@ app.post("/api/admin/create-trader", auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false }); }
 });
 
+// ✅ ফ্রন্টেন্ডের রিকোয়েস্ট অনুযায়ী এডিট রুট (Updated to PUT for EditTrader)
+app.put("/api/admin/edit-trader/:id", auth, adminAuth, async (req, res) => {
+  try {
+    await Trader.findByIdAndUpdate(req.params.id, req.body);
+    res.json({ success: true, message: "Trader Updated Successfully" });
+  } catch (err) { res.status(500).json({ success: false }); }
+});
+
 app.post("/api/admin/update-trader", auth, adminAuth, async (req, res) => {
   try {
     const { id, name, img, profit, winRate, aum, mdd, status } = req.body;
