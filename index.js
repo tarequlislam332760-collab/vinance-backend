@@ -4,7 +4,6 @@ import cors from "cors";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
-
 dotenv.config();
 const app = express();
 
@@ -15,9 +14,12 @@ app.use(express.json());
 /* ================= DB CONNECTION (UPDATED) ================= */
 const dbURI = process.env.MONGO_URI || process.env.MONGODB_URI;
 
+if (!dbURI) {
+  console.error("❌ MONGO_URI is missing in Environment Variables!");
+}
+
 mongoose.connect(dbURI, {
-  serverSelectionTimeoutMS: 30000, // ৩০ সেকেন্ড সময় নিবে কানেক্ট হতে
-  socketTimeoutMS: 45000,
+  serverSelectionTimeoutMS: 30000,
 })
   .then(() => console.log("✅ Database Connected Successfully to BinanceDB"))
   .catch(err => console.error("❌ Database Connection Error:", err));
