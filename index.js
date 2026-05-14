@@ -35,82 +35,98 @@ mongoose.connect(dbURI, { serverSelectionTimeoutMS: 30000 })
 
 /* ================= SCHEMAS ================= */
 const UserSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  email: { type: String, required: true, unique: true, lowercase: true, trim: true },
-  password: { type: String, required: true },
-  role: { type: String, enum: ['user', 'admin'], default: 'user' },
-  status: { type: String, enum: ['active', 'banned', 'pending'], default: 'active' },
-  balance: { type: Number, default: 0 },
+  name:         { type: String, required: true },
+  email:        { type: String, required: true, unique: true, lowercase: true, trim: true },
+  password:     { type: String, required: true },
+  role:         { type: String, enum: ['user', 'admin'], default: 'user' },
+  status:       { type: String, enum: ['active', 'banned', 'pending'], default: 'active' },
+  balance:      { type: Number, default: 0 },
   profileImage: { type: String, default: '' }
 }, { timestamps: true });
 
 const TransactionSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  type: { type: String, enum: ['deposit', 'withdraw', 'trade'], required: true },
-  amount: { type: Number, required: true },
-  symbol: { type: String, default: 'USDT' },
-  status: { type: String, enum: ['pending', 'approved', 'rejected', 'completed'], default: 'pending' },
-  paymentId: { type: String },
-  address: { type: String },
-  txHash: { type: String },
-  date: { type: Date, default: Date.now }
+  userId:     { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  type:       { type: String, enum: ['deposit', 'withdraw', 'trade', 'spot_buy', 'spot_sell'], required: true },
+  amount:     { type: Number, required: true },
+  symbol:     { type: String, default: 'USDT' },
+  status:     { type: String, enum: ['pending', 'approved', 'rejected', 'completed'], default: 'pending' },
+  paymentId:  { type: String },
+  address:    { type: String },
+  txHash:     { type: String },
+  entryPrice: { type: Number, default: 0 },
+  date:       { type: Date, default: Date.now }
 }, { timestamps: true });
 
 const PlanSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  minAmount: { type: Number, required: true },
-  maxAmount: { type: Number, required: true },
+  name:          { type: String, required: true },
+  minAmount:     { type: Number, required: true },
+  maxAmount:     { type: Number, required: true },
   profitPercent: { type: Number, required: true },
-  duration: { type: Number, required: true },
-  status: { type: Boolean, default: true }
+  duration:      { type: Number, required: true },
+  status:        { type: Boolean, default: true }
 }, { timestamps: true });
 
 const InvestmentSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  planId: { type: mongoose.Schema.Types.ObjectId, ref: 'Plan', required: true },
-  amount: { type: Number, required: true },
-  profit: { type: Number, default: 0 },
-  status: { type: String, enum: ['active', 'completed'], default: 'active' },
+  userId:   { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  planId:   { type: mongoose.Schema.Types.ObjectId, ref: 'Plan', required: true },
+  amount:   { type: Number, required: true },
+  profit:   { type: Number, default: 0 },
+  status:   { type: String, enum: ['active', 'completed'], default: 'active' },
   expireAt: { type: Date, required: true }
 }, { timestamps: true });
 
 const FuturesTradeSchema = new mongoose.Schema({
-  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  symbol: { type: String, required: true, uppercase: true },
-  type: { type: String, enum: ['buy', 'sell'], required: true },
-  amount: { type: Number, required: true },
-  leverage: { type: Number, default: 1 },
+  user:       { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  symbol:     { type: String, required: true, uppercase: true },
+  type:       { type: String, enum: ['buy', 'sell'], required: true },
+  amount:     { type: Number, required: true },
+  leverage:   { type: Number, default: 1 },
   entryPrice: { type: Number, required: true },
-  tp: { type: Number, default: null },
-  sl: { type: Number, default: null },
-  pnl: { type: Number, default: 0 },
-  status: { type: String, enum: ['open', 'closed'], default: 'open' },
+  closePrice: { type: Number, default: null },
+  tp:         { type: Number, default: null },
+  sl:         { type: Number, default: null },
+  pnl:        { type: Number, default: 0 },
+  status:     { type: String, enum: ['open', 'closed'], default: 'open' },
+  createdAt:  { type: Date, default: Date.now }
+});
+
+const SpotTradeSchema = new mongoose.Schema({
+  user:      { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  symbol:    { type: String, required: true, uppercase: true },
+  side:      { type: String, enum: ['buy', 'sell'], required: true },
+  orderType: { type: String, enum: ['market', 'limit'], default: 'market' },
+  amount:    { type: Number, required: true },
+  price:     { type: Number, required: true },
+  total:     { type: Number, required: true },
+  fee:       { type: Number, default: 0 },
+  status:    { type: String, enum: ['filled', 'pending', 'cancelled'], default: 'filled' },
   createdAt: { type: Date, default: Date.now }
 });
 
 const TraderSchema = new mongoose.Schema({
-  name: { type: String, required: true },
-  avatar: { type: String },
-  roi: { type: Number, default: 0 },
-  pnl: { type: Number, default: 0 },
-  aum: { type: Number, default: 0 },
-  days: { type: Number, default: 0 },
-  followers: { type: Number, default: 0 },
+  name:         { type: String, required: true },
+  avatar:       { type: String },
+  roi:          { type: Number, default: 0 },
+  pnl:          { type: Number, default: 0 },
+  aum:          { type: Number, default: 0 },
+  days:         { type: Number, default: 0 },
+  followers:    { type: Number, default: 0 },
   maxFollowers: { type: Number, default: 300 },
   isApiEnabled: { type: Boolean, default: true },
-  chartData: [Number],
-  experience: { type: Number },
-  capital: { type: Number },
-  status: { type: String, default: 'pending' },
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+  chartData:    [Number],
+  experience:   { type: Number },
+  capital:      { type: Number },
+  status:       { type: String, default: 'pending' },
+  userId:       { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }, { timestamps: true });
 
-const User = mongoose.model('User', UserSchema);
-const Transaction = mongoose.model('Transaction', TransactionSchema);
-const Plan = mongoose.model('Plan', PlanSchema);
-const Investment = mongoose.model('Investment', InvestmentSchema);
+const User         = mongoose.model('User', UserSchema);
+const Transaction  = mongoose.model('Transaction', TransactionSchema);
+const Plan         = mongoose.model('Plan', PlanSchema);
+const Investment   = mongoose.model('Investment', InvestmentSchema);
 const FuturesTrade = mongoose.model('FuturesTrade', FuturesTradeSchema);
-const Trader = mongoose.model('Trader', TraderSchema);
+const SpotTrade    = mongoose.model('SpotTrade', SpotTradeSchema);
+const Trader       = mongoose.model('Trader', TraderSchema);
 
 /* ================= AUTH MIDDLEWARE ================= */
 const auth = (req, res, next) => {
@@ -130,6 +146,18 @@ const adminAuth = (req, res, next) => {
     if (req.user.role !== 'admin') return res.status(403).json({ message: "Admin only" });
     next();
   });
+};
+
+/* ================= HELPER: LIVE PRICE ================= */
+const getLivePrice = async (symbol) => {
+  try {
+    const res = await axios.get(
+      `https://api.binance.com/api/v3/ticker/price?symbol=${symbol.toUpperCase()}USDT`
+    );
+    return parseFloat(res.data.price);
+  } catch {
+    return null;
+  }
 };
 
 /* ================= AUTH ROUTES ================= */
@@ -159,7 +187,10 @@ app.post('/api/login', async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
-    res.json({ token, user: { id: user._id, name: user.name, email: user.email, balance: user.balance, role: user.role } });
+    res.json({
+      token,
+      user: { id: user._id, name: user.name, email: user.email, balance: user.balance, role: user.role }
+    });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -178,31 +209,131 @@ app.get('/api/profile', auth, async (req, res) => {
 app.put('/api/profile', auth, async (req, res) => {
   try {
     const { name, profileImage } = req.body;
-    const user = await User.findByIdAndUpdate(req.user.id, { name, profileImage }, { new: true }).select('-password');
+    const user = await User.findByIdAndUpdate(
+      req.user.id, { name, profileImage }, { new: true }
+    ).select('-password');
     res.json(user);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
 
-/* ================= DEPOSIT ROUTES (NOWPayments Real) ================= */
+/* ================= SPOT TRADE ROUTES ================= */
+app.post('/api/trade', auth, async (req, res) => {
+  try {
+    const { type, amount, symbol, orderType = 'market', limitPrice } = req.body;
 
-// Create real crypto deposit
+    if (!amount || amount <= 0)
+      return res.status(400).json({ message: "Invalid amount" });
+    if (!symbol)
+      return res.status(400).json({ message: "Symbol required" });
+
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    // Get live price
+    const livePrice  = await getLivePrice(symbol) || parseFloat(limitPrice) || 1;
+    const tradePrice = orderType === 'limit' && limitPrice ? parseFloat(limitPrice) : livePrice;
+
+    // Fee: 0.1%
+    const fee       = parseFloat(amount) * 0.001;
+    const totalCost = parseFloat(amount) + fee;
+
+    if (type === 'buy') {
+      if (user.balance < totalCost)
+        return res.status(400).json({ message: "Insufficient balance!" });
+      user.balance -= totalCost;
+    } else {
+      user.balance += (parseFloat(amount) - fee);
+    }
+    await user.save();
+
+    // Save spot trade record
+    const spotTrade = new SpotTrade({
+      user: req.user.id,
+      symbol: symbol.toUpperCase(),
+      side: type,
+      orderType,
+      amount: parseFloat(amount),
+      price: tradePrice,
+      total: parseFloat(amount),
+      fee,
+      status: 'filled'
+    });
+    await spotTrade.save();
+
+    // Save transaction
+    const transaction = new Transaction({
+      userId:     req.user.id,
+      type:       type === 'buy' ? 'spot_buy' : 'spot_sell',
+      amount:     parseFloat(amount),
+      symbol:     symbol.toUpperCase(),
+      status:     'completed',
+      entryPrice: tradePrice
+    });
+    await transaction.save();
+
+    res.json({
+      success:    true,
+      message:    `${type === 'buy' ? '✅ Buy' : '✅ Sell'} order filled at $${tradePrice.toFixed(2)}`,
+      trade:      spotTrade,
+      entryPrice: tradePrice,
+      fee,
+      newBalance: user.balance
+    });
+  } catch (err) {
+    console.error("Spot trade error:", err.message);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get('/api/trade/history', auth, async (req, res) => {
+  try {
+    const trades = await SpotTrade.find({ user: req.user.id })
+      .sort({ createdAt: -1 }).limit(50);
+    res.json(trades);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get('/api/trade/open-orders', auth, async (req, res) => {
+  try {
+    const orders = await SpotTrade.find({ user: req.user.id, status: 'pending' })
+      .sort({ createdAt: -1 });
+    res.json(orders);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.delete('/api/trade/cancel/:orderId', auth, async (req, res) => {
+  try {
+    const order = await SpotTrade.findOne({ _id: req.params.orderId, user: req.user.id });
+    if (!order) return res.status(404).json({ message: "Order not found" });
+    if (order.status !== 'pending') return res.status(400).json({ message: "Order already filled" });
+    order.status = 'cancelled';
+    await order.save();
+    await User.findByIdAndUpdate(req.user.id, { $inc: { balance: order.amount } });
+    res.json({ message: "Order cancelled", order });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/* ================= DEPOSIT ROUTES ================= */
 app.post('/api/deposit', auth, async (req, res) => {
   try {
     const { amount, currency = 'usdttrc20' } = req.body;
-
-    if (!amount || amount <= 0) {
+    if (!amount || amount <= 0)
       return res.status(400).json({ message: "Invalid amount" });
-    }
 
     const NOWPAYMENTS_API_KEY = process.env.NOWPAYMENTS_API_KEY;
 
     if (!NOWPAYMENTS_API_KEY) {
-      // Fallback: manual deposit if no API key
       const transaction = new Transaction({
         userId: req.user.id,
-        type: 'deposit',
+        type:   'deposit',
         amount: parseFloat(amount),
         symbol: 'USDT',
         status: 'pending'
@@ -215,69 +346,56 @@ app.post('/api/deposit', auth, async (req, res) => {
       });
     }
 
-    // NOWPayments real payment
     const paymentResponse = await axios.post(
       'https://api.nowpayments.io/v1/payment',
       {
-        price_amount: parseFloat(amount),
-        price_currency: 'usd',
-        pay_currency: currency,
-        order_id: `vinance_${req.user.id}_${Date.now()}`,
-        order_description: `Vinance deposit for user ${req.user.id}`,
-        ipn_callback_url: `${process.env.BACKEND_URL || 'https://vinance-backend-1.onrender.com'}/api/deposit/webhook`
+        price_amount:       parseFloat(amount),
+        price_currency:     'usd',
+        pay_currency:       currency,
+        order_id:           `vinance_${req.user.id}_${Date.now()}`,
+        order_description:  `Vinance deposit for user ${req.user.id}`,
+        ipn_callback_url:   `${process.env.BACKEND_URL || 'https://vinance-backend-1.onrender.com'}/api/deposit/webhook`
       },
-      {
-        headers: {
-          'x-api-key': NOWPAYMENTS_API_KEY,
-          'Content-Type': 'application/json'
-        }
-      }
+      { headers: { 'x-api-key': NOWPAYMENTS_API_KEY, 'Content-Type': 'application/json' } }
     );
 
     const payment = paymentResponse.data;
 
-    // Save transaction
     const transaction = new Transaction({
-      userId: req.user.id,
-      type: 'deposit',
-      amount: parseFloat(amount),
-      symbol: currency.toUpperCase(),
-      status: 'pending',
+      userId:    req.user.id,
+      type:      'deposit',
+      amount:    parseFloat(amount),
+      symbol:    currency.toUpperCase(),
+      status:    'pending',
       paymentId: payment.payment_id,
-      address: payment.pay_address
+      address:   payment.pay_address
     });
     await transaction.save();
 
     res.json({
       paymentId: payment.payment_id,
-      address: payment.pay_address,
-      amount: payment.pay_amount,
-      currency: payment.pay_currency,
-      status: payment.payment_status,
+      address:   payment.pay_address,
+      amount:    payment.pay_amount,
+      currency:  payment.pay_currency,
+      status:    payment.payment_status,
       transaction
     });
-
   } catch (err) {
     console.error("Deposit error:", err.response?.data || err.message);
     res.status(500).json({ message: "Deposit failed", error: err.response?.data || err.message });
   }
 });
 
-// NOWPayments Webhook - auto credit balance
 app.post('/api/deposit/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   try {
-    const sig = req.headers['x-nowpayments-sig'];
+    const sig  = req.headers['x-nowpayments-sig'];
     const body = req.body;
 
-    // Verify signature
     if (process.env.NOWPAYMENTS_IPN_SECRET) {
       const sortedBody = JSON.stringify(JSON.parse(body), Object.keys(JSON.parse(body)).sort());
       const hmac = crypto.createHmac('sha512', process.env.NOWPAYMENTS_IPN_SECRET)
-        .update(sortedBody)
-        .digest('hex');
-      if (hmac !== sig) {
-        return res.status(401).json({ message: "Invalid signature" });
-      }
+        .update(sortedBody).digest('hex');
+      if (hmac !== sig) return res.status(401).json({ message: "Invalid signature" });
     }
 
     const data = JSON.parse(body);
@@ -289,15 +407,10 @@ app.post('/api/deposit/webhook', express.raw({ type: 'application/json' }), asyn
         transaction.status = 'completed';
         transaction.txHash = data.outcome_transaction_hash || '';
         await transaction.save();
-
-        // Credit user balance
-        await User.findByIdAndUpdate(transaction.userId, {
-          $inc: { balance: transaction.amount }
-        });
+        await User.findByIdAndUpdate(transaction.userId, { $inc: { balance: transaction.amount } });
         console.log(`✅ Balance credited: $${transaction.amount} to user ${transaction.userId}`);
       }
     }
-
     res.status(200).json({ message: "OK" });
   } catch (err) {
     console.error("Webhook error:", err.message);
@@ -305,12 +418,11 @@ app.post('/api/deposit/webhook', express.raw({ type: 'application/json' }), asyn
   }
 });
 
-// Check deposit status
 app.get('/api/deposit/status/:paymentId', auth, async (req, res) => {
   try {
     const transaction = await Transaction.findOne({
       paymentId: req.params.paymentId,
-      userId: req.user.id
+      userId:    req.user.id
     });
     if (!transaction) return res.status(404).json({ message: "Payment not found" });
     res.json(transaction);
@@ -323,12 +435,10 @@ app.get('/api/deposit/status/:paymentId', auth, async (req, res) => {
 app.post('/api/withdraw', auth, async (req, res) => {
   try {
     const { amount, address } = req.body;
-    const userId = req.user.id;
-
     if (!amount || amount <= 0) return res.status(400).json({ message: "Invalid amount" });
     if (!address) return res.status(400).json({ message: "Wallet address required" });
 
-    const user = await User.findById(userId);
+    const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ message: "User not found" });
     if (user.balance < amount) return res.status(400).json({ message: "Insufficient balance!" });
 
@@ -336,18 +446,18 @@ app.post('/api/withdraw', auth, async (req, res) => {
     await user.save();
 
     const transaction = new Transaction({
-      userId: user._id,
-      type: 'withdraw',
+      userId:  user._id,
+      type:    'withdraw',
       amount,
-      symbol: 'USDT',
-      status: 'pending',
+      symbol:  'USDT',
+      status:  'pending',
       address,
-      date: new Date()
+      date:    new Date()
     });
     await transaction.save();
 
     res.json({
-      message: "Withdrawal request submitted. Processing within 24 hours.",
+      message:    "Withdrawal request submitted. Processing within 24 hours.",
       newBalance: user.balance,
       transaction
     });
@@ -367,53 +477,50 @@ app.get('/api/transactions', auth, async (req, res) => {
 });
 
 /* ================= FUTURES ROUTES ================= */
-
-// Get live price from Binance
-const getLivePrice = async (symbol) => {
-  try {
-    const res = await axios.get(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol}USDT`);
-    return parseFloat(res.data.price);
-  } catch {
-    return null;
-  }
-};
-
 app.post('/api/futures/trade', auth, async (req, res) => {
   try {
     const { symbol, type, amount, leverage, tp, sl } = req.body;
-    const user = await User.findById(req.user.id);
+    if (!amount || amount <= 0) return res.status(400).json({ message: "Invalid amount" });
 
+    const user = await User.findById(req.user.id);
     if (user.balance < amount) return res.status(400).json({ message: "Insufficient balance!" });
 
-    const entryPrice = await getLivePrice(symbol.replace('USDT', ''));
+    const entryPrice = await getLivePrice(symbol.replace('USDT', ''))
+      || parseFloat(req.body.entryPrice) || 0;
     if (!entryPrice) return res.status(400).json({ message: "Could not fetch live price" });
 
     user.balance -= parseFloat(amount);
     await user.save();
 
     const trade = new FuturesTrade({
-      user: req.user.id,
-      symbol: symbol.toUpperCase(),
+      user:       req.user.id,
+      symbol:     symbol.toUpperCase(),
       type,
-      amount: parseFloat(amount),
-      leverage: parseInt(leverage) || 1,
+      amount:     parseFloat(amount),
+      leverage:   parseInt(leverage) || 1,
       entryPrice,
-      tp: tp || null,
-      sl: sl || null
+      tp:         tp || null,
+      sl:         sl || null
     });
     await trade.save();
 
-    // Log transaction
     const transaction = new Transaction({
-      userId: req.user.id,
-      type: 'trade',
-      amount: parseFloat(amount),
-      symbol: symbol.toUpperCase(),
-      status: 'approved'
+      userId:     req.user.id,
+      type:       'trade',
+      amount:     parseFloat(amount),
+      symbol:     symbol.toUpperCase(),
+      status:     'completed',
+      entryPrice
     });
     await transaction.save();
 
-    res.json({ message: "Trade opened", trade, entryPrice, newBalance: user.balance });
+    res.json({
+      success:    true,
+      message:    `${type === 'buy' ? '↑ Long' : '↓ Short'} position opened at $${entryPrice}`,
+      trade,
+      entryPrice,
+      newBalance: user.balance
+    });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -421,25 +528,27 @@ app.post('/api/futures/trade', auth, async (req, res) => {
 
 app.get('/api/futures/positions', auth, async (req, res) => {
   try {
-    const positions = await FuturesTrade.find({ user: req.user.id, status: 'open' }).sort({ createdAt: -1 });
+    const positions = await FuturesTrade.find({ user: req.user.id, status: 'open' })
+      .sort({ createdAt: -1 });
 
-    // Add live PNL
     const enriched = await Promise.all(positions.map(async (pos) => {
-      const sym = pos.symbol.replace('USDT', '');
+      const sym       = pos.symbol.replace('USDT', '');
       const markPrice = await getLivePrice(sym) || pos.entryPrice;
-      const priceDiff = pos.type === 'buy' ? markPrice - pos.entryPrice : pos.entryPrice - markPrice;
-      const pnl = (priceDiff / pos.entryPrice) * pos.amount * pos.leverage;
-      const pnlPercentage = ((priceDiff / pos.entryPrice) * pos.leverage * 100).toFixed(2);
+      const priceDiff = pos.type === 'buy'
+        ? markPrice - pos.entryPrice
+        : pos.entryPrice - markPrice;
+      const pnl            = (priceDiff / pos.entryPrice) * pos.amount * pos.leverage;
+      const pnlPercentage  = ((priceDiff / pos.entryPrice) * pos.leverage * 100).toFixed(2);
       const liquidationPrice = pos.type === 'buy'
-        ? pos.entryPrice * (1 - 1 / pos.leverage)
-        : pos.entryPrice * (1 + 1 / pos.leverage);
+        ? (pos.entryPrice * (1 - 1 / pos.leverage)).toFixed(2)
+        : (pos.entryPrice * (1 + 1 / pos.leverage)).toFixed(2);
 
       return {
         ...pos._doc,
         markPrice,
         pnl: parseFloat(pnl.toFixed(2)),
         pnlPercentage,
-        liquidationPrice: liquidationPrice.toFixed(2),
+        liquidationPrice,
         side: pos.type === 'buy' ? 'Buy' : 'Sell',
         size: `${pos.amount} USDT`
       };
@@ -451,25 +560,78 @@ app.get('/api/futures/positions', auth, async (req, res) => {
   }
 });
 
+// Close by positionId in body
+app.post('/api/futures/close', auth, async (req, res) => {
+  try {
+    const { positionId } = req.body;
+    const trade = await FuturesTrade.findOne({ _id: positionId, user: req.user.id });
+    if (!trade) return res.status(404).json({ message: "Trade not found" });
+    if (trade.status === 'closed') return res.status(400).json({ message: "Already closed" });
+
+    const sym        = trade.symbol.replace('USDT', '');
+    const closePrice = await getLivePrice(sym) || trade.entryPrice;
+    const priceDiff  = trade.type === 'buy'
+      ? closePrice - trade.entryPrice
+      : trade.entryPrice - closePrice;
+    const pnl = (priceDiff / trade.entryPrice) * trade.amount * trade.leverage;
+
+    trade.pnl        = parseFloat(pnl.toFixed(2));
+    trade.closePrice = closePrice;
+    trade.status     = 'closed';
+    await trade.save();
+
+    const returnAmount = trade.amount + trade.pnl;
+    if (returnAmount > 0) {
+      await User.findByIdAndUpdate(req.user.id, { $inc: { balance: returnAmount } });
+    }
+
+    res.json({
+      success:      true,
+      message:      `Position closed. PNL: ${trade.pnl >= 0 ? '+' : ''}$${trade.pnl}`,
+      pnl:          trade.pnl,
+      closePrice,
+      returnAmount
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Close by tradeId in URL
 app.post('/api/futures/close/:tradeId', auth, async (req, res) => {
   try {
     const trade = await FuturesTrade.findOne({ _id: req.params.tradeId, user: req.user.id });
     if (!trade) return res.status(404).json({ message: "Trade not found" });
     if (trade.status === 'closed') return res.status(400).json({ message: "Already closed" });
 
-    const sym = trade.symbol.replace('USDT', '');
+    const sym        = trade.symbol.replace('USDT', '');
     const closePrice = await getLivePrice(sym) || trade.entryPrice;
-    const priceDiff = trade.type === 'buy' ? closePrice - trade.entryPrice : trade.entryPrice - closePrice;
+    const priceDiff  = trade.type === 'buy'
+      ? closePrice - trade.entryPrice
+      : trade.entryPrice - closePrice;
     const pnl = (priceDiff / trade.entryPrice) * trade.amount * trade.leverage;
 
-    trade.pnl = parseFloat(pnl.toFixed(2));
-    trade.status = 'closed';
+    trade.pnl        = parseFloat(pnl.toFixed(2));
+    trade.closePrice = closePrice;
+    trade.status     = 'closed';
     await trade.save();
 
     const returnAmount = trade.amount + trade.pnl;
-    await User.findByIdAndUpdate(req.user.id, { $inc: { balance: returnAmount > 0 ? returnAmount : 0 } });
+    if (returnAmount > 0) {
+      await User.findByIdAndUpdate(req.user.id, { $inc: { balance: returnAmount } });
+    }
 
-    res.json({ message: "Trade closed", pnl: trade.pnl, closePrice });
+    res.json({ success: true, message: "Trade closed", pnl: trade.pnl, closePrice });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.get('/api/futures/history', auth, async (req, res) => {
+  try {
+    const trades = await FuturesTrade.find({ user: req.user.id })
+      .sort({ createdAt: -1 }).limit(50);
+    res.json(trades);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -491,16 +653,17 @@ app.post('/api/invest', auth, async (req, res) => {
     const plan = await Plan.findById(planId);
     if (!plan) return res.status(404).json({ message: "Plan not found" });
     if (amount < plan.minAmount || amount > plan.maxAmount) {
-      return res.status(400).json({ message: `Amount must be between $${plan.minAmount} and $${plan.maxAmount}` });
+      return res.status(400).json({
+        message: `Amount must be between $${plan.minAmount} and $${plan.maxAmount}`
+      });
     }
-
     const user = await User.findById(req.user.id);
     if (user.balance < amount) return res.status(400).json({ message: "Insufficient balance!" });
 
     user.balance -= amount;
     await user.save();
 
-    const expireAt = new Date(Date.now() + plan.duration * 60 * 60 * 1000);
+    const expireAt   = new Date(Date.now() + plan.duration * 60 * 60 * 1000);
     const investment = new Investment({ userId: req.user.id, planId, amount, expireAt });
     await investment.save();
 
@@ -512,14 +675,15 @@ app.post('/api/invest', auth, async (req, res) => {
 
 app.get('/api/my-investments', auth, async (req, res) => {
   try {
-    const investments = await Investment.find({ userId: req.user.id }).populate('planId').sort({ createdAt: -1 });
+    const investments = await Investment.find({ userId: req.user.id })
+      .populate('planId').sort({ createdAt: -1 });
     res.json(investments);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
 
-// Auto-complete investments (runs every 1 minute)
+// Auto-complete expired investments (every 1 minute)
 setInterval(async () => {
   try {
     const expired = await Investment.find({ status: 'active', expireAt: { $lte: new Date() } });
@@ -527,7 +691,7 @@ setInterval(async () => {
       const plan = await Plan.findById(inv.planId);
       if (!plan) continue;
       const profit = (inv.amount * plan.profitPercent) / 100;
-      const total = inv.amount + profit;
+      const total  = inv.amount + profit;
       inv.profit = profit;
       inv.status = 'completed';
       await inv.save();
@@ -562,11 +726,20 @@ app.post('/api/become-trader', auth, async (req, res) => {
 /* ================= ADMIN ROUTES ================= */
 app.get('/api/admin/stats', adminAuth, async (req, res) => {
   try {
-    const users = await User.countDocuments();
-    const totalBalance = await User.aggregate([{ $group: { _id: null, total: { $sum: '$balance' } } }]);
-    const pendingDeposits = await Transaction.countDocuments({ type: 'deposit', status: 'pending' });
-    const pendingWithdraws = await Transaction.countDocuments({ type: 'withdraw', status: 'pending' });
-    res.json({ users, totalBalance: totalBalance[0]?.total || 0, pendingDeposits, pendingWithdraws });
+    const users           = await User.countDocuments();
+    const totalBalanceAgg = await User.aggregate([{ $group: { _id: null, total: { $sum: '$balance' } } }]);
+    const pendingDeposits = await Transaction.countDocuments({ type: 'deposit',  status: 'pending' });
+    const pendingWithdaws = await Transaction.countDocuments({ type: 'withdraw', status: 'pending' });
+    const totalTrades     = await SpotTrade.countDocuments();
+    const totalFutures    = await FuturesTrade.countDocuments();
+    res.json({
+      users,
+      totalBalance:    totalBalanceAgg[0]?.total || 0,
+      pendingDeposits,
+      pendingWithdaws,
+      totalTrades,
+      totalFutures
+    });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -601,27 +774,24 @@ app.delete('/api/admin/delete-user/:id', adminAuth, async (req, res) => {
 
 app.get('/api/admin/transactions', adminAuth, async (req, res) => {
   try {
-    const transactions = await Transaction.find().populate('userId', 'name email').sort({ createdAt: -1 });
+    const transactions = await Transaction.find()
+      .populate('userId', 'name email').sort({ createdAt: -1 });
     res.json(transactions);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
 
-// Handle deposit/withdraw requests
 app.post('/api/admin/handle-request', adminAuth, async (req, res) => {
   try {
     const { id, status } = req.body;
     const transaction = await Transaction.findById(id).populate('userId');
     if (!transaction) return res.status(404).json({ message: "Transaction not found" });
-
     transaction.status = status;
     await transaction.save();
-
     if (status === 'approved' && transaction.type === 'deposit') {
       await User.findByIdAndUpdate(transaction.userId._id, { $inc: { balance: transaction.amount } });
     }
-
     res.json({ message: `Request ${status}`, transaction });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -630,14 +800,14 @@ app.post('/api/admin/handle-request', adminAuth, async (req, res) => {
 
 app.get('/api/admin/pending-requests', adminAuth, async (req, res) => {
   try {
-    const requests = await Transaction.find({ status: 'pending' }).populate('userId', 'name email').sort({ createdAt: -1 });
+    const requests = await Transaction.find({ status: 'pending' })
+      .populate('userId', 'name email').sort({ createdAt: -1 });
     res.json(requests);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
 
-// Plans
 app.post('/api/admin/create-plan', adminAuth, async (req, res) => {
   try {
     const plan = new Plan(req.body);
@@ -657,7 +827,6 @@ app.delete('/api/admin/delete-plan/:id', adminAuth, async (req, res) => {
   }
 });
 
-// Traders
 app.post('/api/admin/create-trader', adminAuth, async (req, res) => {
   try {
     const trader = new Trader({ ...req.body, status: 'active' });
@@ -679,7 +848,8 @@ app.delete('/api/admin/delete-trader/:id', adminAuth, async (req, res) => {
 
 app.get('/api/admin/deposits', adminAuth, async (req, res) => {
   try {
-    const deposits = await Transaction.find({ type: 'deposit' }).populate('userId', 'name email').sort({ createdAt: -1 });
+    const deposits = await Transaction.find({ type: 'deposit' })
+      .populate('userId', 'name email').sort({ createdAt: -1 });
     res.json(deposits);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -689,7 +859,9 @@ app.get('/api/admin/deposits', adminAuth, async (req, res) => {
 app.put('/api/admin/deposit/:id', adminAuth, async (req, res) => {
   try {
     const { status } = req.body;
-    const transaction = await Transaction.findByIdAndUpdate(req.params.id, { status }, { new: true });
+    const transaction = await Transaction.findByIdAndUpdate(
+      req.params.id, { status }, { new: true }
+    );
     if (status === 'approved') {
       await User.findByIdAndUpdate(transaction.userId, { $inc: { balance: transaction.amount } });
     }
