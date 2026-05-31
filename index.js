@@ -119,26 +119,26 @@ const SpotTradeSchema = new mongoose.Schema({
   status:    { type: String, enum: ['filled','pending','cancelled'], default: 'filled' },
 }, { timestamps: true });
 
-/* ── NEW: Square Post Schema ── */
+/* ── Square Post Schema ── */
 const PostSchema = new mongoose.Schema({
-  author:     { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  authorName: { type: String, required: true },
+  author:       { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  authorName:   { type: String, required: true },
   authorHandle: { type: String },
-  content:    { type: String, required: true, maxlength: 280 },
-  tag:        { type: String, default: 'All' },
-  likes:      [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-  comments:   [{
+  content:      { type: String, required: true, maxlength: 280 },
+  tag:          { type: String, default: 'All' },
+  likes:        [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+  comments:     [{
     author:     { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     authorName: String,
     text:       String,
     createdAt:  { type: Date, default: Date.now },
   }],
-  shares:     { type: Number, default: 0 },
-  views:      { type: Number, default: 0 },
-  verified:   { type: Boolean, default: false },
+  shares:   { type: Number, default: 0 },
+  views:    { type: Number, default: 0 },
+  verified: { type: Boolean, default: false },
 }, { timestamps: true });
 
-/* ── NEW: Notification Schema ── */
+/* ── Notification Schema ── */
 const NotificationSchema = new mongoose.Schema({
   userId:  { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   type:    { type: String, default: 'system' },
@@ -149,7 +149,7 @@ const NotificationSchema = new mongoose.Schema({
   link:    String,
 }, { timestamps: true });
 
-/* ── NEW: CopyTrade Schema ── */
+/* ── CopyTrade Schema ── */
 const CopyTradeSchema = new mongoose.Schema({
   userId:   { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   traderId: { type: mongoose.Schema.Types.ObjectId, ref: 'Trader', required: true },
@@ -160,7 +160,7 @@ const CopyTradeSchema = new mongoose.Schema({
   roi:      { type: Number, default: 0 },
 }, { timestamps: true });
 
-/* ── NEW: CapitalConnect Application Schema ── */
+/* ── CapitalConnect Schema ── */
 const CapitalApplicationSchema = new mongoose.Schema({
   userId:      { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   type:        { type: String, enum: ['fund_invest','vc_apply','fund_register'], required: true },
@@ -174,6 +174,40 @@ const CapitalApplicationSchema = new mongoose.Schema({
   email:       String,
 }, { timestamps: true });
 
+/* ══════════════════════════════════════
+   ── NEW: Trading Bot Schema ──
+══════════════════════════════════════ */
+const BotSchema = new mongoose.Schema({
+  userId:     { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  name:       { type: String, required: true },         /* "Grid Bot — BTC" */
+  type:       { type: String, required: true },         /* grid | dca | futures | arbitrage */
+  icon:       { type: String, default: '🤖' },
+  color:      { type: String, default: '#627eea' },
+  coin:       { type: String, default: 'BTC' },         /* trading pair */
+  investment: { type: Number, required: true },         /* USDT locked */
+  profit:     { type: Number, default: 0 },
+  profitPct:  { type: Number, default: 0 },
+  trades:     { type: Number, default: 0 },
+  status:     { type: String, enum: ['running','stopped','error'], default: 'running' },
+
+  /* type-specific config (stored as JSON) */
+  config: {
+    coin:      String,
+    interval:  String,   /* DCA */
+    maxOrders: Number,   /* DCA */
+    lower:     Number,   /* Grid */
+    upper:     Number,   /* Grid */
+    grids:     Number,   /* Grid */
+    leverage:  Number,   /* Futures */
+    tp:        Number,
+    sl:        Number,
+  },
+
+  /* auto-profit tick tracking */
+  lastTickAt: { type: Date, default: Date.now },
+}, { timestamps: true });
+
+/* ── Models ── */
 const User               = mongoose.models.User               || mongoose.model('User',               UserSchema);
 const Transaction        = mongoose.models.Transaction        || mongoose.model('Transaction',        TransactionSchema);
 const Plan               = mongoose.models.Plan               || mongoose.model('Plan',               PlanSchema);
@@ -185,6 +219,7 @@ const Post               = mongoose.models.Post               || mongoose.model(
 const Notification       = mongoose.models.Notification       || mongoose.model('Notification',       NotificationSchema);
 const CopyTrade          = mongoose.models.CopyTrade          || mongoose.model('CopyTrade',          CopyTradeSchema);
 const CapitalApplication = mongoose.models.CapitalApplication || mongoose.model('CapitalApplication', CapitalApplicationSchema);
+const Bot                = mongoose.models.Bot                || mongoose.model('Bot',                BotSchema);
 
 /* ================= AUTH ================= */
 const auth = (req, res, next) => {
@@ -209,11 +244,10 @@ const getLivePrice = async (symbol) => {
   } catch { return null; }
 };
 
-/* Push a notification to a user */
 const pushNotif = async (userId, type, title, message, amount = null) => {
   try {
     await Notification.create({ userId, type, title, message, ...(amount !== null ? { amount } : {}) });
-  } catch (e) { console.error('pushNotif error:', e.message); }
+  } catch (e) { console.error('pushNotif:', e.message); }
 };
 
 /* ═══════════════════════════════════════
@@ -247,12 +281,12 @@ app.post('/api/login', async (req, res) => {
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
-/* ── Plans (public) ── */
+/* ── Plans ── */
 app.get('/api/plans', async (_, res) => {
   try { res.json(await Plan.find({ status: true })); } catch { res.status(500).json([]); }
 });
 
-/* ── Traders (public) ── */
+/* ── Traders ── */
 app.get('/api/traders', async (_, res) => {
   try { res.json(await Trader.find({ status: { $in: ['active','approved'] } }).sort({ roi: -1 })); }
   catch { res.status(500).json([]); }
@@ -266,7 +300,6 @@ app.get('/api/traders/all', async (_, res) => {
    USER ROUTES
 ═══════════════════════════════════════ */
 
-/* ── Profile ── */
 app.get('/api/profile', auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select('-password');
@@ -298,7 +331,6 @@ app.post('/api/profile/update', auth, async (req, res) => {
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
-/* ── Transactions ── */
 app.get('/api/transactions', auth, async (req, res) => {
   try { res.json(await Transaction.find({ userId: req.user.id }).sort({ createdAt: -1 })); }
   catch { res.status(500).json([]); }
@@ -312,7 +344,7 @@ app.post('/api/deposit', auth, async (req, res) => {
     const KEY = process.env.NOWPAYMENTS_API_KEY;
     if (!KEY) {
       await Transaction.create({ userId: req.user.id, type: 'deposit', amount: Number(amount), symbol: 'USDT', status: 'pending', method: method || 'Manual', txId: txId || transactionId || '', transactionId: txId || transactionId || '' });
-      await pushNotif(req.user.id, 'deposit', '💰 Deposit Submitted', `Your deposit of $${amount} is pending admin approval.`, amount);
+      await pushNotif(req.user.id, 'deposit', '💰 Deposit Submitted', `$${amount} pending admin approval.`, amount);
       return res.json({ success: true, message: 'Deposit submitted. Admin will verify within 24h.', manual: true });
     }
     const payment = await axios.post('https://api.nowpayments.io/v1/payment', {
@@ -323,7 +355,6 @@ app.post('/api/deposit', auth, async (req, res) => {
     const trx = await Transaction.create({ userId: req.user.id, type: 'deposit', amount: Number(amount), symbol: 'USDT', status: 'pending', paymentId: payment.data.payment_id, address: payment.data.pay_address });
     res.json({ success: true, paymentId: payment.data.payment_id, address: payment.data.pay_address, amount: payment.data.pay_amount, currency: payment.data.pay_currency, transaction: trx });
   } catch (err) {
-    console.error('Deposit error:', err.response?.data || err.message);
     res.status(500).json({ message: 'Deposit failed', error: err.response?.data || err.message });
   }
 });
@@ -337,7 +368,7 @@ app.post('/api/withdraw', auth, async (req, res) => {
     const user = await User.findById(req.user.id);
     if (user.balance < amount) return res.status(400).json({ message: 'Insufficient balance' });
     await Transaction.create({ userId: req.user.id, type: 'withdraw', amount: Number(amount), symbol: 'USDT', status: 'pending', method: method || 'USDT (TRC20)', address, details: `Address: ${address}` });
-    await pushNotif(req.user.id, 'withdraw', '💸 Withdrawal Requested', `Withdrawal of $${amount} is pending processing.`, amount);
+    await pushNotif(req.user.id, 'withdraw', '💸 Withdrawal Requested', `$${amount} pending processing.`, amount);
     res.json({ success: true, message: 'Withdrawal request submitted! Processing within 24h.' });
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
@@ -357,7 +388,7 @@ app.post('/api/trade', auth, async (req, res) => {
     await user.save();
     await SpotTrade.create({ user: req.user.id, symbol: (symbol||'BTC').toUpperCase(), side: type, orderType: orderType||'market', amount: parseFloat(amount), price: tradePrice, total: parseFloat(amount), fee });
     await Transaction.create({ userId: req.user.id, type: type==='buy'?'spot_buy':'spot_sell', amount: parseFloat(amount), symbol: (symbol||'BTC').toUpperCase(), status: 'completed', entryPrice: tradePrice });
-    res.json({ success: true, message: `${type==='buy'?'✅ Buy':'✅ Sell'} order filled at $${tradePrice.toFixed(2)}`, entryPrice: tradePrice, fee, newBalance: user.balance });
+    res.json({ success: true, message: `${type==='buy'?'✅ Buy':'✅ Sell'} filled at $${tradePrice.toFixed(2)}`, entryPrice: tradePrice, fee, newBalance: user.balance });
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
@@ -374,10 +405,9 @@ app.post('/api/futures/trade', auth, async (req, res) => {
     const user = await User.findById(req.user.id);
     if (user.balance < amount) return res.status(400).json({ message: 'Insufficient balance' });
     const price = entryPrice || await getLivePrice(symbol?.replace('USDT','') || 'BTC');
-    if (!price) return res.status(400).json({ message: 'Could not fetch entry price' });
-    user.balance -= parseFloat(amount);
-    await user.save();
-    const trade = await FuturesTrade.create({ user: req.user.id, userId: req.user.id, symbol: (symbol||'BTC').toUpperCase().replace('USDT','')+('USDT'), type, amount: parseFloat(amount), leverage: parseInt(leverage)||1, entryPrice: parseFloat(price), tp: tp||null, sl: sl||null, status: 'open' });
+    if (!price) return res.status(400).json({ message: 'Could not fetch price' });
+    user.balance -= parseFloat(amount); await user.save();
+    const trade = await FuturesTrade.create({ user: req.user.id, userId: req.user.id, symbol: (symbol||'BTC').toUpperCase().replace('USDT','')+'USDT', type, amount: parseFloat(amount), leverage: parseInt(leverage)||1, entryPrice: parseFloat(price), tp: tp||null, sl: sl||null, status: 'open' });
     await Transaction.create({ userId: req.user.id, type: `futures-${type}`, amount: parseFloat(amount), symbol: symbol?.toUpperCase(), status: 'completed', entryPrice: parseFloat(price), details: `Leverage: ${leverage}x | Entry: $${price}` });
     res.json({ success: true, message: `${type==='buy'?'↑ Long':'↓ Short'} opened at $${parseFloat(price).toFixed(2)}`, trade, entryPrice: price, newBalance: user.balance });
   } catch (err) { res.status(500).json({ message: err.message }); }
@@ -385,14 +415,13 @@ app.post('/api/futures/trade', auth, async (req, res) => {
 
 app.get('/api/futures/positions', auth, async (req, res) => {
   try {
-    const userId   = req.user.id;
+    const userId = req.user.id;
     const positions = await FuturesTrade.find({ $or: [{ user: userId }, { userId }], status: 'open' }).sort({ createdAt: -1 });
-    const enriched  = await Promise.all(positions.map(async pos => {
-      const sym       = pos.symbol.replace('USDT','');
-      const markPrice = await getLivePrice(sym) || pos.entryPrice;
+    const enriched = await Promise.all(positions.map(async pos => {
+      const markPrice = await getLivePrice(pos.symbol.replace('USDT','')) || pos.entryPrice;
       const priceDiff = pos.type === 'buy' ? markPrice - pos.entryPrice : pos.entryPrice - markPrice;
       const pnl       = (priceDiff / pos.entryPrice) * pos.amount * pos.leverage;
-      return { ...pos.toObject(), markPrice, pnl: parseFloat(pnl.toFixed(2)), pnlPercentage: ((priceDiff / pos.entryPrice) * pos.leverage * 100).toFixed(2), liquidationPrice: pos.type==='buy' ? (pos.entryPrice*(1-1/pos.leverage)).toFixed(2) : (pos.entryPrice*(1+1/pos.leverage)).toFixed(2), side: pos.type==='buy'?'Buy':'Sell', size: `${pos.amount} USDT` };
+      return { ...pos.toObject(), markPrice, pnl: parseFloat(pnl.toFixed(2)), pnlPercentage: ((priceDiff / pos.entryPrice) * pos.leverage * 100).toFixed(2), liquidationPrice: pos.type==='buy'?(pos.entryPrice*(1-1/pos.leverage)).toFixed(2):(pos.entryPrice*(1+1/pos.leverage)).toFixed(2), side: pos.type==='buy'?'Buy':'Sell', size: `${pos.amount} USDT` };
     }));
     res.json(enriched);
   } catch { res.status(500).json([]); }
@@ -401,27 +430,26 @@ app.get('/api/futures/positions', auth, async (req, res) => {
 app.post('/api/futures/close', auth, async (req, res) => {
   try {
     const { positionId } = req.body;
-    const userId  = req.user.id;
-    const trade   = await FuturesTrade.findOne({ _id: positionId, $or: [{ user: userId }, { userId }] });
+    const userId = req.user.id;
+    const trade  = await FuturesTrade.findOne({ _id: positionId, $or: [{ user: userId }, { userId }] });
     if (!trade)                    return res.status(404).json({ message: 'Position not found' });
     if (trade.status === 'closed') return res.status(400).json({ message: 'Already closed' });
-    const sym        = trade.symbol.replace('USDT','');
-    const closePrice = await getLivePrice(sym) || trade.entryPrice;
+    const closePrice = await getLivePrice(trade.symbol.replace('USDT','')) || trade.entryPrice;
     const priceDiff  = trade.type === 'buy' ? closePrice - trade.entryPrice : trade.entryPrice - closePrice;
     const pnl        = (priceDiff / trade.entryPrice) * trade.amount * trade.leverage;
     trade.pnl = parseFloat(pnl.toFixed(2)); trade.closePrice = closePrice; trade.status = 'closed';
     await trade.save();
     const returnAmt = trade.amount + trade.pnl;
     if (returnAmt > 0) await User.findByIdAndUpdate(userId, { $inc: { balance: returnAmt } });
-    await pushNotif(userId, 'futures', '⚡ Position Closed', `${trade.symbol} closed. PNL: ${trade.pnl >= 0 ? '+' : ''}$${trade.pnl}`, trade.pnl);
-    res.json({ success: true, message: `Position closed. PNL: ${trade.pnl>=0?'+':''}$${trade.pnl}`, pnl: trade.pnl, closePrice, returnAmount: returnAmt });
+    await pushNotif(userId, 'futures', '⚡ Position Closed', `${trade.symbol} PNL: ${trade.pnl>=0?'+':''}$${trade.pnl}`, trade.pnl);
+    res.json({ success: true, message: `Closed. PNL: ${trade.pnl>=0?'+':''}$${trade.pnl}`, pnl: trade.pnl, closePrice, returnAmount: returnAmt });
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
 app.post('/api/futures/close/:tradeId', auth, async (req, res) => {
   try {
-    const userId  = req.user.id;
-    const trade   = await FuturesTrade.findOne({ _id: req.params.tradeId, $or: [{ user: userId }, { userId }] });
+    const userId = req.user.id;
+    const trade  = await FuturesTrade.findOne({ _id: req.params.tradeId, $or: [{ user: userId }, { userId }] });
     if (!trade)                    return res.status(404).json({ message: 'Trade not found' });
     if (trade.status === 'closed') return res.status(400).json({ message: 'Already closed' });
     const closePrice = await getLivePrice(trade.symbol.replace('USDT','')) || trade.entryPrice;
@@ -457,7 +485,7 @@ app.post('/api/invest', auth, async (req, res) => {
     const expireAt = new Date(Date.now() + duration * 3600000);
     await Investment.create({ userId: req.user.id, planId, amount, expireAt });
     await Transaction.create({ userId: req.user.id, type: 'investment', amount, symbol: 'USDT', status: 'completed' });
-    await pushNotif(req.user.id, 'investment', '🏦 Investment Activated', `$${amount} invested in ${plan.name}. Returns in ${duration}h.`, amount);
+    await pushNotif(req.user.id, 'investment', '🏦 Investment Activated', `$${amount} in ${plan.name}. Returns in ${duration}h.`, amount);
     res.json({ success: true, message: 'Investment successful!', newBalance: user.balance });
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
@@ -467,7 +495,6 @@ app.get('/api/my-investments', auth, async (req, res) => {
   catch { res.status(500).json([]); }
 });
 
-/* Auto-complete investments */
 setInterval(async () => {
   try {
     const expired = await Investment.find({ status: 'active', expireAt: { $lte: new Date() } });
@@ -477,7 +504,7 @@ setInterval(async () => {
       const profit = (inv.amount * plan.profitPercent) / 100;
       inv.profit = profit; inv.status = 'completed'; await inv.save();
       await User.findByIdAndUpdate(inv.userId, { $inc: { balance: inv.amount + profit } });
-      await pushNotif(inv.userId, 'investment', '✅ Investment Completed!', `${plan.name} completed. Profit: +$${profit.toFixed(2)}`, profit);
+      await pushNotif(inv.userId, 'investment', '✅ Investment Completed!', `${plan.name} profit: +$${profit.toFixed(2)}`, profit);
     }
   } catch (err) { console.error('Auto-complete:', err.message); }
 }, 60000);
@@ -500,77 +527,52 @@ app.post('/api/traders/apply', auth, async (req, res) => {
 });
 
 /* ═══════════════════════════════════════
-   SQUARE POSTS — REAL
+   SQUARE POSTS
 ═══════════════════════════════════════ */
-
-/* GET posts */
 app.get('/api/posts', async (req, res) => {
   try {
     const { tag, limit = 30, skip = 0 } = req.query;
     const filter = tag && tag !== 'All' ? { tag } : {};
-    const posts = await Post.find(filter)
-      .populate('author', 'name profileImage img role')
-      .sort({ createdAt: -1 })
-      .skip(Number(skip))
-      .limit(Number(limit));
-    res.json(posts);
-  } catch (err) { res.status(500).json([]); }
+    res.json(await Post.find(filter).populate('author', 'name profileImage img role').sort({ createdAt: -1 }).skip(Number(skip)).limit(Number(limit)));
+  } catch { res.status(500).json([]); }
 });
 
-/* POST create post */
 app.post('/api/posts', auth, async (req, res) => {
   try {
     const { content, tag } = req.body;
     if (!content?.trim()) return res.status(400).json({ message: 'Content required' });
     if (content.length > 280) return res.status(400).json({ message: 'Max 280 characters' });
     const user = await User.findById(req.user.id);
-    const post = await Post.create({
-      author:       req.user.id,
-      authorName:   user.name,
-      authorHandle: '@' + user.email.split('@')[0],
-      content:      content.trim(),
-      tag:          tag || 'All',
-      verified:     user.role === 'admin',
-    });
-    /* Give XP */
+    const post = await Post.create({ author: req.user.id, authorName: user.name, authorHandle: '@' + user.email.split('@')[0], content: content.trim(), tag: tag || 'All', verified: user.role === 'admin' });
     await User.findByIdAndUpdate(req.user.id, { $inc: { xp: 5 } });
     const populated = await post.populate('author', 'name profileImage img role');
     res.json({ success: true, post: populated });
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
-/* DELETE post */
 app.delete('/api/posts/:id', auth, async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ message: 'Post not found' });
-    if (post.author.toString() !== req.user.id && req.user.role !== 'admin')
-      return res.status(403).json({ message: 'Not authorized' });
+    if (post.author.toString() !== req.user.id && req.user.role !== 'admin') return res.status(403).json({ message: 'Not authorized' });
     await post.deleteOne();
     res.json({ success: true });
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
-/* LIKE / UNLIKE post */
 app.post('/api/posts/:id/like', auth, async (req, res) => {
   try {
-    const post   = await Post.findById(req.params.id);
+    const post  = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ message: 'Post not found' });
-    const uid    = new mongoose.Types.ObjectId(req.user.id);
-    const liked  = post.likes.some(l => l.equals(uid));
+    const uid   = new mongoose.Types.ObjectId(req.user.id);
+    const liked = post.likes.some(l => l.equals(uid));
     if (liked) post.likes = post.likes.filter(l => !l.equals(uid));
-    else {
-      post.likes.push(uid);
-      /* XP for post author on like */
-      if (post.author.toString() !== req.user.id)
-        await User.findByIdAndUpdate(post.author, { $inc: { xp: 2 } });
-    }
+    else { post.likes.push(uid); if (post.author.toString() !== req.user.id) await User.findByIdAndUpdate(post.author, { $inc: { xp: 2 } }); }
     await post.save();
     res.json({ success: true, likes: post.likes.length, liked: !liked });
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
-/* COMMENT */
 app.post('/api/posts/:id/comment', auth, async (req, res) => {
   try {
     const { text } = req.body;
@@ -580,189 +582,256 @@ app.post('/api/posts/:id/comment', auth, async (req, res) => {
     const user = await User.findById(req.user.id);
     post.comments.push({ author: req.user.id, authorName: user.name, text: text.trim() });
     await post.save();
-    /* XP for author */
-    if (post.author.toString() !== req.user.id)
-      await User.findByIdAndUpdate(post.author, { $inc: { xp: 1 } });
+    if (post.author.toString() !== req.user.id) await User.findByIdAndUpdate(post.author, { $inc: { xp: 1 } });
     res.json({ success: true, comment: post.comments[post.comments.length - 1] });
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
-/* INCREMENT view */
-app.post('/api/posts/:id/view', async (req, res) => {
-  try {
-    await Post.findByIdAndUpdate(req.params.id, { $inc: { views: 1 } });
-    res.json({ success: true });
-  } catch { res.json({ success: false }); }
-});
-
-/* INCREMENT share */
-app.post('/api/posts/:id/share', async (req, res) => {
-  try {
-    await Post.findByIdAndUpdate(req.params.id, { $inc: { shares: 1 } });
-    res.json({ success: true });
-  } catch { res.json({ success: false }); }
-});
-
-/* User's own posts */
-app.get('/api/my-posts', auth, async (req, res) => {
-  try { res.json(await Post.find({ author: req.user.id }).sort({ createdAt: -1 })); }
-  catch { res.status(500).json([]); }
-});
+app.post('/api/posts/:id/view',  async (req, res) => { try { await Post.findByIdAndUpdate(req.params.id, { $inc: { views: 1 } }); res.json({ success: true }); } catch { res.json({ success: false }); } });
+app.post('/api/posts/:id/share', async (req, res) => { try { await Post.findByIdAndUpdate(req.params.id, { $inc: { shares: 1 } }); res.json({ success: true }); } catch { res.json({ success: false }); } });
+app.get('/api/my-posts', auth, async (req, res) => { try { res.json(await Post.find({ author: req.user.id }).sort({ createdAt: -1 })); } catch { res.status(500).json([]); } });
 
 /* ═══════════════════════════════════════
-   NOTIFICATIONS — REAL
+   NOTIFICATIONS
 ═══════════════════════════════════════ */
-
-/* GET notifications */
 app.get('/api/notifications', auth, async (req, res) => {
   try {
     const notifs = await Notification.find({ userId: req.user.id }).sort({ createdAt: -1 }).limit(50);
-    const unread  = await Notification.countDocuments({ userId: req.user.id, read: false });
+    const unread = await Notification.countDocuments({ userId: req.user.id, read: false });
     res.json({ notifications: notifs, unread });
   } catch { res.status(500).json({ notifications: [], unread: 0 }); }
 });
-
-/* MARK all read */
-app.post('/api/notifications/read-all', auth, async (req, res) => {
-  try {
-    await Notification.updateMany({ userId: req.user.id, read: false }, { read: true });
-    res.json({ success: true });
-  } catch { res.status(500).json({ success: false }); }
-});
-
-/* MARK one read */
-app.post('/api/notifications/:id/read', auth, async (req, res) => {
-  try {
-    await Notification.findOneAndUpdate({ _id: req.params.id, userId: req.user.id }, { read: true });
-    res.json({ success: true });
-  } catch { res.status(500).json({ success: false }); }
-});
-
-/* DELETE notification */
-app.delete('/api/notifications/:id', auth, async (req, res) => {
-  try {
-    await Notification.findOneAndDelete({ _id: req.params.id, userId: req.user.id });
-    res.json({ success: true });
-  } catch { res.status(500).json({ success: false }); }
-});
+app.post('/api/notifications/read-all', auth, async (req, res) => { try { await Notification.updateMany({ userId: req.user.id, read: false }, { read: true }); res.json({ success: true }); } catch { res.status(500).json({ success: false }); } });
+app.post('/api/notifications/:id/read', auth, async (req, res) => { try { await Notification.findOneAndUpdate({ _id: req.params.id, userId: req.user.id }, { read: true }); res.json({ success: true }); } catch { res.status(500).json({ success: false }); } });
+app.delete('/api/notifications/:id', auth, async (req, res) => { try { await Notification.findOneAndDelete({ _id: req.params.id, userId: req.user.id }); res.json({ success: true }); } catch { res.status(500).json({ success: false }); } });
 
 /* ═══════════════════════════════════════
-   COPY TRADE — REAL
+   COPY TRADE
 ═══════════════════════════════════════ */
-
-/* Start copying a trader */
 app.post('/api/copy-trade/start', auth, async (req, res) => {
   try {
     const { traderId, amount } = req.body;
-    if (!amount || amount < 10) return res.status(400).json({ message: 'Minimum copy amount is $10' });
+    if (!amount || amount < 10) return res.status(400).json({ message: 'Minimum $10' });
     const user   = await User.findById(req.user.id);
     const trader = await Trader.findById(traderId);
     if (!trader) return res.status(404).json({ message: 'Trader not found' });
     if (user.balance < amount) return res.status(400).json({ message: 'Insufficient balance' });
-
-    /* Deduct from balance */
     user.balance -= Number(amount); await user.save();
-
     const ct = await CopyTrade.create({ userId: req.user.id, traderId, amount: Number(amount) });
     await Transaction.create({ userId: req.user.id, type: 'copy_trade', amount: Number(amount), symbol: 'USDT', status: 'completed', details: `Copying: ${trader.name}` });
-    await pushNotif(req.user.id, 'trade', '📋 Copy Trade Started', `You are now copying ${trader.name} with $${amount}`, amount);
-
-    /* Increment trader followers count */
+    await pushNotif(req.user.id, 'trade', '📋 Copy Trade Started', `Copying ${trader.name} with $${amount}`, amount);
     await Trader.findByIdAndUpdate(traderId, { $inc: { followers: 1 } });
-
     res.json({ success: true, message: `Now copying ${trader.name}!`, copyTrade: ct, newBalance: user.balance });
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
-/* GET my copy trades */
-app.get('/api/copy-trade/my', auth, async (req, res) => {
-  try {
-    const copies = await CopyTrade.find({ userId: req.user.id }).populate('traderId').sort({ createdAt: -1 });
-    res.json(copies);
-  } catch { res.status(500).json([]); }
-});
+app.get('/api/copy-trade/my', auth, async (req, res) => { try { res.json(await CopyTrade.find({ userId: req.user.id }).populate('traderId').sort({ createdAt: -1 })); } catch { res.status(500).json([]); } });
 
-/* STOP copy trade */
 app.post('/api/copy-trade/stop/:id', auth, async (req, res) => {
   try {
     const ct = await CopyTrade.findOne({ _id: req.params.id, userId: req.user.id });
     if (!ct) return res.status(404).json({ message: 'Copy trade not found' });
     ct.status = 'stopped'; await ct.save();
-    /* Return amount + profit */
     const returnAmt = ct.amount + (ct.profit || 0);
     await User.findByIdAndUpdate(req.user.id, { $inc: { balance: returnAmt } });
     await Trader.findByIdAndUpdate(ct.traderId, { $inc: { followers: -1 } });
-    await pushNotif(req.user.id, 'trade', '📋 Copy Trade Stopped', `Copy trade stopped. Returned: $${returnAmt.toFixed(2)}`, returnAmt);
-    res.json({ success: true, message: `Copy trade stopped. $${returnAmt.toFixed(2)} returned.` });
+    await pushNotif(req.user.id, 'trade', '📋 Copy Trade Stopped', `Returned: $${returnAmt.toFixed(2)}`, returnAmt);
+    res.json({ success: true, message: `Stopped. $${returnAmt.toFixed(2)} returned.` });
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
-/* Simulate copy trade profit every 5 minutes */
 setInterval(async () => {
   try {
     const active = await CopyTrade.find({ status: 'active' }).populate('traderId');
     for (const ct of active) {
       if (!ct.traderId) continue;
-      const roiRate = (ct.traderId.roi || 10) / 100 / (30 * 24 * 12); /* per 5min */
-      const profit  = ct.amount * roiRate * (0.5 + Math.random()); /* some variance */
-      ct.profit  = (ct.profit || 0) + profit;
-      ct.roi     = (ct.profit / ct.amount) * 100;
-      ct.trades  = (ct.trades || 0) + (Math.random() > 0.7 ? 1 : 0);
+      const roiRate = (ct.traderId.roi || 10) / 100 / (30 * 24 * 12);
+      const profit  = ct.amount * roiRate * (0.5 + Math.random());
+      ct.profit = (ct.profit || 0) + profit;
+      ct.roi    = (ct.profit / ct.amount) * 100;
+      ct.trades = (ct.trades || 0) + (Math.random() > 0.7 ? 1 : 0);
       await ct.save();
     }
   } catch (err) { console.error('Copy profit tick:', err.message); }
 }, 5 * 60 * 1000);
 
 /* ═══════════════════════════════════════
-   CAPITAL CONNECT — REAL
+   CAPITAL CONNECT
 ═══════════════════════════════════════ */
-
-/* Apply to invest in a fund */
 app.post('/api/capital/apply-fund', auth, async (req, res) => {
   try {
     const { targetName } = req.body;
     if (!targetName) return res.status(400).json({ message: 'Fund name required' });
     const user = await User.findById(req.user.id);
     await CapitalApplication.create({ userId: req.user.id, type: 'fund_invest', targetName, email: user.email });
-    await pushNotif(req.user.id, 'system', '💎 Fund Application Submitted', `Your application for ${targetName} has been received. Review takes 3-5 days.`);
+    await pushNotif(req.user.id, 'system', '💎 Fund Application Submitted', `Application for ${targetName} received. Review 3-5 days.`);
     res.json({ success: true, message: `Application submitted for ${targetName}!` });
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
-/* Apply for VC funding */
 app.post('/api/capital/apply-vc', auth, async (req, res) => {
   try {
     const { targetName } = req.body;
     if (!targetName) return res.status(400).json({ message: 'VC name required' });
     const user = await User.findById(req.user.id);
     await CapitalApplication.create({ userId: req.user.id, type: 'vc_apply', targetName, email: user.email });
-    await pushNotif(req.user.id, 'system', '🏦 VC Application Submitted', `Your application to ${targetName} has been received.`);
+    await pushNotif(req.user.id, 'system', '🏦 VC Application Submitted', `Application to ${targetName} received.`);
     res.json({ success: true, message: `Application sent to ${targetName}!` });
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
-/* Register a fund */
 app.post('/api/capital/register-fund', auth, async (req, res) => {
   try {
     const { fundName, website, aum, strategy, description } = req.body;
     if (!fundName?.trim()) return res.status(400).json({ message: 'Fund name required' });
     const user = await User.findById(req.user.id);
     await CapitalApplication.create({ userId: req.user.id, type: 'fund_register', fundName, website, aum, strategy, description, email: user.email });
-    await pushNotif(req.user.id, 'system', '📝 Fund Registration Received', `${fundName} is under review. We'll contact you within 3-5 business days.`);
-    res.json({ success: true, message: 'Fund registration submitted for review!' });
+    await pushNotif(req.user.id, 'system', '📝 Fund Registration Received', `${fundName} under review. Contact within 3-5 days.`);
+    res.json({ success: true, message: 'Fund registration submitted!' });
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
 
-/* GET my capital applications */
-app.get('/api/capital/my-applications', auth, async (req, res) => {
-  try { res.json(await CapitalApplication.find({ userId: req.user.id }).sort({ createdAt: -1 })); }
+app.get('/api/capital/my-applications', auth, async (req, res) => { try { res.json(await CapitalApplication.find({ userId: req.user.id }).sort({ createdAt: -1 })); } catch { res.status(500).json([]); } });
+
+/* ═══════════════════════════════════════
+   TRADING BOTS — REAL (NEW)
+═══════════════════════════════════════ */
+
+/* GET all bots for current user */
+app.get('/api/bots', auth, async (req, res) => {
+  try {
+    const bots = await Bot.find({ userId: req.user.id }).sort({ createdAt: -1 });
+    res.json(bots);
+  } catch (err) { res.status(500).json([]); }
+});
+
+/* POST create bot — deducts balance */
+app.post('/api/bots', auth, async (req, res) => {
+  try {
+    const { name, type, icon, color, coin, investment, config } = req.body;
+
+    /* Validate */
+    if (!name || !type) return res.status(400).json({ message: 'name and type required' });
+    const invest = parseFloat(investment);
+    if (!invest || invest < 10) return res.status(400).json({ message: 'Minimum investment is $10' });
+
+    const user = await User.findById(req.user.id);
+    if (user.balance < invest) return res.status(400).json({ message: 'Insufficient balance' });
+
+    /* Deduct balance */
+    user.balance -= invest;
+    await user.save();
+
+    /* Save bot */
+    const bot = await Bot.create({
+      userId:     req.user.id,
+      name,
+      type,
+      icon:       icon || '🤖',
+      color:      color || '#627eea',
+      coin:       coin || 'BTC',
+      investment: invest,
+      status:     'running',
+      config:     config || {},
+    });
+
+    /* Transaction record */
+    await Transaction.create({
+      userId:  req.user.id,
+      type:    'bot_start',
+      amount:  invest,
+      symbol:  'USDT',
+      status:  'completed',
+      details: `Bot started: ${name}`,
+    });
+
+    /* Notification */
+    await pushNotif(req.user.id, 'system', '🤖 Bot Started', `${name} is now running with $${invest} investment.`, invest);
+
+    res.json({ success: true, bot, newBalance: user.balance });
+  } catch (err) { res.status(500).json({ message: err.message }); }
+});
+
+/* PUT toggle bot status */
+app.put('/api/bots/:id/toggle', auth, async (req, res) => {
+  try {
+    const bot = await Bot.findOne({ _id: req.params.id, userId: req.user.id });
+    if (!bot) return res.status(404).json({ message: 'Bot not found' });
+    bot.status = bot.status === 'running' ? 'stopped' : 'running';
+    await bot.save();
+    res.json({ success: true, bot, status: bot.status });
+  } catch (err) { res.status(500).json({ message: err.message }); }
+});
+
+/* DELETE bot — returns investment + profit to balance */
+app.delete('/api/bots/:id', auth, async (req, res) => {
+  try {
+    const bot = await Bot.findOne({ _id: req.params.id, userId: req.user.id });
+    if (!bot) return res.status(404).json({ message: 'Bot not found' });
+
+    const returnAmt = parseFloat(bot.investment) + parseFloat(bot.profit || 0);
+
+    /* Return funds */
+    await User.findByIdAndUpdate(req.user.id, { $inc: { balance: returnAmt } });
+
+    /* Transaction */
+    await Transaction.create({
+      userId:  req.user.id,
+      type:    'bot_stop',
+      amount:  returnAmt,
+      symbol:  'USDT',
+      status:  'completed',
+      details: `Bot stopped: ${bot.name} | Returned: $${returnAmt.toFixed(2)}`,
+    });
+
+    await pushNotif(req.user.id, 'system', '🤖 Bot Stopped', `${bot.name} stopped. $${returnAmt.toFixed(2)} returned to balance.`, returnAmt);
+
+    await bot.deleteOne();
+    res.json({ success: true, message: `Bot deleted. $${returnAmt.toFixed(2)} returned.`, returnAmount: returnAmt });
+  } catch (err) { res.status(500).json({ message: err.message }); }
+});
+
+/* GET bot stats summary */
+app.get('/api/bots/stats', auth, async (req, res) => {
+  try {
+    const bots = await Bot.find({ userId: req.user.id });
+    res.json({
+      total:   bots.length,
+      running: bots.filter(b => b.status === 'running').length,
+      profit:  bots.reduce((s, b) => s + (b.profit || 0), 0),
+      trades:  bots.reduce((s, b) => s + (b.trades || 0), 0),
+    });
+  } catch { res.status(500).json({ total:0, running:0, profit:0, trades:0 }); }
+});
+
+/* ── Auto profit tick for running bots (every 5 min) ── */
+setInterval(async () => {
+  try {
+    const runningBots = await Bot.find({ status: 'running' });
+    for (const bot of runningBots) {
+      /* ROI based on bot type */
+      const annualRoi = { grid: 0.18, dca: 0.12, futures: 0.35, arbitrage: 0.09 }[bot.type] || 0.15;
+      const per5min   = annualRoi / (365 * 24 * 12);
+      const profit    = bot.investment * per5min * (0.6 + Math.random() * 0.8); /* some variance */
+
+      bot.profit    = parseFloat(((bot.profit || 0) + profit).toFixed(4));
+      bot.profitPct = parseFloat(((bot.profit / bot.investment) * 100).toFixed(2));
+      bot.trades    = (bot.trades || 0) + (Math.random() > 0.6 ? 1 : 0);
+      bot.lastTickAt = new Date();
+      await bot.save();
+    }
+  } catch (err) { console.error('Bot profit tick:', err.message); }
+}, 5 * 60 * 1000);
+
+/* ── Admin: all bots ── */
+app.get('/api/admin/bots', auth, adminAuth, async (req, res) => {
+  try { res.json(await Bot.find().populate('userId','name email').sort({ createdAt: -1 })); }
   catch { res.status(500).json([]); }
 });
 
 /* ═══════════════════════════════════════
    ADMIN ROUTES
 ═══════════════════════════════════════ */
-
 app.get('/api/admin/all-data', auth, adminAuth, async (req, res) => {
   try {
     const [users, requests, traders, plans, investments] = await Promise.all([
@@ -778,31 +847,21 @@ app.get('/api/admin/all-data', auth, adminAuth, async (req, res) => {
 
 app.get('/api/admin/stats', auth, adminAuth, async (req, res) => {
   try {
-    const [users, totalBalanceAgg, pendingDeposits, pendingWithdaws, totalPosts] = await Promise.all([
+    const [users, totalBalanceAgg, pendingDeposits, pendingWithdraws, totalPosts, totalBots] = await Promise.all([
       User.countDocuments(),
       User.aggregate([{ $group: { _id: null, total: { $sum: '$balance' } } }]),
       Transaction.countDocuments({ type:'deposit',  status:'pending' }),
       Transaction.countDocuments({ type:'withdraw', status:'pending' }),
       Post.countDocuments(),
+      Bot.countDocuments({ status: 'running' }),
     ]);
-    res.json({ users, totalBalance: totalBalanceAgg[0]?.total||0, pendingDeposits, pendingWithdaws, totalPosts });
+    res.json({ users, totalBalance: totalBalanceAgg[0]?.total||0, pendingDeposits, pendingWithdraws, totalPosts, totalBots });
   } catch { res.status(500).json({}); }
 });
 
-app.get('/api/admin/users', auth, adminAuth, async (req, res) => {
-  try { res.json(await User.find().select('-password').sort({ createdAt: -1 })); }
-  catch { res.status(500).json([]); }
-});
-
-app.put('/api/admin/user/:id', auth, adminAuth, async (req, res) => {
-  try { res.json({ success: true, user: await User.findByIdAndUpdate(req.params.id, req.body, { new: true }).select('-password') }); }
-  catch { res.status(500).json({ success: false }); }
-});
-
-app.post('/api/admin/update-user', auth, adminAuth, async (req, res) => {
-  try { const { userId, ...data } = req.body; await User.findByIdAndUpdate(userId, data); res.json({ success: true }); }
-  catch { res.status(500).json({ success: false }); }
-});
+app.get('/api/admin/users', auth, adminAuth, async (req, res) => { try { res.json(await User.find().select('-password').sort({ createdAt: -1 })); } catch { res.status(500).json([]); } });
+app.put('/api/admin/user/:id', auth, adminAuth, async (req, res) => { try { res.json({ success: true, user: await User.findByIdAndUpdate(req.params.id, req.body, { new: true }).select('-password') }); } catch { res.status(500).json({ success: false }); } });
+app.post('/api/admin/update-user', auth, adminAuth, async (req, res) => { try { const { userId, ...data } = req.body; await User.findByIdAndUpdate(userId, data); res.json({ success: true }); } catch { res.status(500).json({ success: false }); } });
 
 app.post('/api/admin/update-balance', auth, adminAuth, async (req, res) => {
   try {
@@ -813,10 +872,7 @@ app.post('/api/admin/update-balance', auth, adminAuth, async (req, res) => {
   } catch { res.status(500).json({ success: false }); }
 });
 
-app.delete('/api/admin/delete-user/:id', auth, adminAuth, async (req, res) => {
-  try { await User.findByIdAndDelete(req.params.id); res.json({ success: true }); }
-  catch { res.status(500).json({ success: false }); }
-});
+app.delete('/api/admin/delete-user/:id', auth, adminAuth, async (req, res) => { try { await User.findByIdAndDelete(req.params.id); res.json({ success: true }); } catch { res.status(500).json({ success: false }); } });
 
 app.post('/api/admin/handle-request', auth, adminAuth, async (req, res) => {
   try {
@@ -827,59 +883,40 @@ app.post('/api/admin/handle-request', auth, adminAuth, async (req, res) => {
     if (status === 'approved') {
       if (trx.type === 'deposit') {
         await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
-        await pushNotif(trx.userId, 'deposit', '✅ Deposit Approved!', `Your deposit of $${trx.amount} has been approved and credited.`, trx.amount);
+        await pushNotif(trx.userId, 'deposit', '✅ Deposit Approved!', `$${trx.amount} credited.`, trx.amount);
       } else if (trx.type === 'withdraw') {
         const user = await User.findById(trx.userId);
         if (!user || user.balance < trx.amount) return res.status(400).json({ message: 'Insufficient user balance' });
         await User.findByIdAndUpdate(trx.userId, { $inc: { balance: -trx.amount } });
-        await pushNotif(trx.userId, 'withdraw', '✅ Withdrawal Approved!', `Your withdrawal of $${trx.amount} has been processed.`, trx.amount);
+        await pushNotif(trx.userId, 'withdraw', '✅ Withdrawal Approved!', `$${trx.amount} processed.`, trx.amount);
       }
     } else if (status === 'rejected') {
       const typeLabel = trx.type === 'deposit' ? 'Deposit' : 'Withdrawal';
-      await pushNotif(trx.userId, trx.type, `❌ ${typeLabel} Rejected`, `Your ${typeLabel.toLowerCase()} of $${trx.amount} was rejected. Contact support.`, trx.amount);
+      await pushNotif(trx.userId, trx.type, `❌ ${typeLabel} Rejected`, `Your $${trx.amount} ${typeLabel.toLowerCase()} was rejected.`, trx.amount);
     }
     trx.status = status; await trx.save();
     res.json({ success: true, message: `Request ${status}`, transaction: trx });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-app.get('/api/admin/pending-requests', auth, adminAuth, async (req, res) => {
-  try { res.json(await Transaction.find({ status:'pending' }).populate('userId','name email').sort({ createdAt: -1 })); }
-  catch { res.status(500).json([]); }
-});
-
-app.get('/api/admin/pending', auth, adminAuth, async (req, res) => {
-  try { res.json(await Transaction.find({ status:'pending' }).populate('userId','name email').sort({ createdAt: -1 })); }
-  catch { res.status(500).json([]); }
-});
-
-app.get('/api/admin/transactions', auth, adminAuth, async (req, res) => {
-  try { res.json(await Transaction.find().populate('userId','name email').sort({ createdAt: -1 })); }
-  catch { res.status(500).json([]); }
-});
-
-app.get('/api/admin/deposits', auth, adminAuth, async (req, res) => {
-  try { res.json(await Transaction.find({ type:'deposit' }).populate('userId','name email').sort({ createdAt: -1 })); }
-  catch { res.status(500).json([]); }
-});
+app.get('/api/admin/pending-requests', auth, adminAuth, async (req, res) => { try { res.json(await Transaction.find({ status:'pending' }).populate('userId','name email').sort({ createdAt: -1 })); } catch { res.status(500).json([]); } });
+app.get('/api/admin/pending', auth, adminAuth, async (req, res) => { try { res.json(await Transaction.find({ status:'pending' }).populate('userId','name email').sort({ createdAt: -1 })); } catch { res.status(500).json([]); } });
+app.get('/api/admin/transactions', auth, adminAuth, async (req, res) => { try { res.json(await Transaction.find().populate('userId','name email').sort({ createdAt: -1 })); } catch { res.status(500).json([]); } });
+app.get('/api/admin/deposits', auth, adminAuth, async (req, res) => { try { res.json(await Transaction.find({ type:'deposit' }).populate('userId','name email').sort({ createdAt: -1 })); } catch { res.status(500).json([]); } });
 
 app.put('/api/admin/deposit/:id', auth, adminAuth, async (req, res) => {
   try {
     const { status } = req.body;
     const trx = await Transaction.findByIdAndUpdate(req.params.id, { status }, { new: true });
-    if (status === 'approved') {
-      await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } });
-      await pushNotif(trx.userId, 'deposit', '✅ Deposit Approved!', `$${trx.amount} credited to your account.`, trx.amount);
-    }
+    if (status === 'approved') { await User.findByIdAndUpdate(trx.userId, { $inc: { balance: trx.amount } }); await pushNotif(trx.userId, 'deposit', '✅ Deposit Approved!', `$${trx.amount} credited.`, trx.amount); }
     res.json({ success: true, transaction: trx });
   } catch { res.status(500).json({ success: false }); }
 });
 
 app.post('/api/admin/create-trader', auth, adminAuth, async (req, res) => {
   try {
-    const d = req.body;
-    const img = d.image || d.img || '';
-    await Trader.create({ name: d.name, image: img, img, avatar: img, profit: Number(d.profit)||0, winRate: Number(d.winRate)||0, roi: Number(d.roi)||0, pnl: Number(d.pnl)||0, aum: Number(d.aum)||0, mdd: Number(d.mdd)||0, days: Number(d.days)||0, followers: Number(d.followers)||0, maxFollowers: Number(d.maxFollowers)||500, isApiEnabled: d.isApiEnabled !== false, chartData: Array.isArray(d.chartData) ? d.chartData : [], status: 'approved' });
+    const d = req.body; const img = d.image || d.img || '';
+    await Trader.create({ name: d.name, image: img, img, avatar: img, profit: Number(d.profit)||0, winRate: Number(d.winRate)||0, roi: Number(d.roi)||0, pnl: Number(d.pnl)||0, aum: Number(d.aum)||0, mdd: Number(d.mdd)||0, days: Number(d.days)||0, followers: Number(d.followers)||0, maxFollowers: Number(d.maxFollowers)||500, isApiEnabled: d.isApiEnabled !== false, chartData: Array.isArray(d.chartData)?d.chartData:[], status: 'approved' });
     res.json({ success: true, message: 'Trader Created' });
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
@@ -896,39 +933,14 @@ app.put('/api/admin/edit-trader/:id', auth, adminAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ success: false, message: err.message }); }
 });
 
-app.delete('/api/admin/delete-trader/:id', auth, adminAuth, async (req, res) => {
-  try { await Trader.findByIdAndDelete(req.params.id); res.json({ success: true }); }
-  catch { res.status(500).json({ success: false }); }
-});
+app.delete('/api/admin/delete-trader/:id', auth, adminAuth, async (req, res) => { try { await Trader.findByIdAndDelete(req.params.id); res.json({ success: true }); } catch { res.status(500).json({ success: false }); } });
+app.post('/api/admin/create-plan', auth, adminAuth, async (req, res) => { try { await Plan.create(req.body); res.json({ success: true, message: 'Plan Created' }); } catch { res.status(500).json({ success: false }); } });
+app.delete('/api/admin/delete-plan/:id', auth, adminAuth, async (req, res) => { try { await Plan.findByIdAndDelete(req.params.id); res.json({ success: true }); } catch { res.status(500).json({ success: false }); } });
 
-app.post('/api/admin/create-plan', auth, adminAuth, async (req, res) => {
-  try { await Plan.create(req.body); res.json({ success: true, message: 'Plan Created' }); }
-  catch { res.status(500).json({ success: false }); }
-});
+app.get('/api/admin/capital-applications', auth, adminAuth, async (req, res) => { try { res.json(await CapitalApplication.find().populate('userId','name email').sort({ createdAt: -1 })); } catch { res.status(500).json([]); } });
+app.get('/api/admin/posts', auth, adminAuth, async (req, res) => { try { res.json(await Post.find().populate('author','name email').sort({ createdAt: -1 })); } catch { res.status(500).json([]); } });
+app.delete('/api/admin/posts/:id', auth, adminAuth, async (req, res) => { try { await Post.findByIdAndDelete(req.params.id); res.json({ success: true }); } catch { res.status(500).json({ success: false }); } });
 
-app.delete('/api/admin/delete-plan/:id', auth, adminAuth, async (req, res) => {
-  try { await Plan.findByIdAndDelete(req.params.id); res.json({ success: true }); }
-  catch { res.status(500).json({ success: false }); }
-});
-
-/* Admin: capital applications */
-app.get('/api/admin/capital-applications', auth, adminAuth, async (req, res) => {
-  try { res.json(await CapitalApplication.find().populate('userId','name email').sort({ createdAt: -1 })); }
-  catch { res.status(500).json([]); }
-});
-
-/* Admin: all posts */
-app.get('/api/admin/posts', auth, adminAuth, async (req, res) => {
-  try { res.json(await Post.find().populate('author','name email').sort({ createdAt: -1 })); }
-  catch { res.status(500).json([]); }
-});
-
-app.delete('/api/admin/posts/:id', auth, adminAuth, async (req, res) => {
-  try { await Post.findByIdAndDelete(req.params.id); res.json({ success: true }); }
-  catch { res.status(500).json({ success: false }); }
-});
-
-/* Admin: send notification to a user */
 app.post('/api/admin/notify', auth, adminAuth, async (req, res) => {
   try {
     const { userId, type, title, message } = req.body;
